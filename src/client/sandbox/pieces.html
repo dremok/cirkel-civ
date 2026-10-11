@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="sv">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Sandbox: pieces</title>
+    <style>
+      html, body { margin: 0; height: 100%; overflow: hidden; background: #f3e3cc; }
+      #app { position: absolute; inset: 0; }
+      #bar { position: absolute; left: 12px; bottom: 12px; z-index: 5; display: flex; gap: 6px; font: 500 13px/1 'Inter Variable', system-ui, sans-serif; }
+      #bar button { padding: 9px 12px; border-radius: 10px; border: 1px solid #d9cfbf; background: rgba(247,242,232,.92); color: #2a2622; cursor: pointer; }
+      #log { position: absolute; right: 12px; top: 12px; z-index: 5; font: 12px/1.4 ui-monospace, monospace; color: #2a2622; background: rgba(247,242,232,.85); padding: 6px 9px; border-radius: 8px; max-width: 40vw; white-space: pre; display: none; }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+    <div id="bar">
+      <button id="play">Spela upp</button>
+      <button id="skip">Hoppa</button>
+      <button id="real">Riktig tur</button>
+    </div>
+    <div id="log"></div>
+    <script type="module" src="./pieces.ts"></script>
+  </body>
+</html>
