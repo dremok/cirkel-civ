@@ -13,7 +13,7 @@ export const CITY_MAX_HP = 20
 export const CITY_REGEN = 3
 export const CITY_RANGED = 3
 export const CITY_RANGE = 2
-export const CITY_DEFENSE = 6
+export const CITY_DEFENSE = 4
 export const MIN_CITY_DISTANCE = 3
 export const CITY_WORK_RADIUS = 2
 

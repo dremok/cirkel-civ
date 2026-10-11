@@ -1,6 +1,6 @@
 import { CITY_MAX_HP, CITY_NAMES, DEFAULT_MAX_TURNS, UNIT_MAX_HP } from './config.ts'
 import { neighbors } from './hex.ts'
-import { generateMap } from './mapgen.ts'
+import { generateMap, mirror } from './mapgen.ts'
 import { canStep } from './terrain.ts'
 import type { City, GameConfig, GameState, PlayerId, TileId, Unit, UnitType } from './types.ts'
 
@@ -19,12 +19,13 @@ export function createGame(cfg: GameConfig): GameState {
     nextId: 1,
     winner: null,
   }
+  const kinds: UnitType[] = ['spear', 'archer', 'settler']
   map.starts.forEach((start, seat) => {
     state.cities.push(newCity(state, seat, start, true))
     const free = neighbors(map, start).filter((nb) => canStep(map, start, nb))
-    const kinds: UnitType[] = ['spear', 'archer', 'settler']
     kinds.forEach((type, i) => {
-      const tile = free[i % free.length]
+      // Two-player maps are point-symmetric: seat 1 gets the mirror image of seat 0's setup.
+      const tile = seats === 2 && seat === 1 ? mirror(state.units[i].tile, map.width, map.height) : free[i % free.length]
       state.units.push(newUnit(state, seat, type, tile))
     })
   })

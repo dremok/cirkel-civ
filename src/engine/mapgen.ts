@@ -107,7 +107,7 @@ function tryGenerate(noiseSeed: string, seed: string, seats: number, size: keyof
   }
   for (const t of tiles) t.biome = biomeFor(map, t)
 
-  const starts = pickStarts(map, seats, symmetric)
+  const starts = pickStarts(map, seats, symmetric, rng)
   if (!starts) return null
   map.starts = starts
   if (!connected(map, starts)) return null
@@ -147,7 +147,7 @@ function startScore(map: GameMap, id: TileId): number {
   return passableNeighbours < 4 ? -Infinity : s
 }
 
-function pickStarts(map: GameMap, seats: number, symmetric: boolean): TileId[] | null {
+function pickStarts(map: GameMap, seats: number, symmetric: boolean, rng: () => number): TileId[] | null {
   const { width: W, height: H } = map
   const interior = map.tiles.filter((t) => t.col >= 2 && t.col < W - 2 && t.row >= 2 && t.row < H - 2)
   const scored = interior
@@ -170,19 +170,69 @@ function pickStarts(map: GameMap, seats: number, symmetric: boolean): TileId[] |
     return [pick.id, mirror(pick.id, W, H)]
   }
 
-  const chosen: TileId[] = [good.reduce((a, b) => (b.s > a.s ? b : a)).id]
-  while (chosen.length < seats) {
-    let pick: { id: TileId; v: number } | null = null
-    for (const c of good) {
-      const dmin = Math.min(...chosen.map((s) => distance(map, s, c.id)))
-      if (dmin < 6) continue
-      const v = dmin * 3 + c.s * 0.3
-      if (!pick || v > pick.v) pick = { id: c.id, v }
+  return fairStarts(map, seats, good, rng)
+}
+
+/**
+ * Three or four seats cannot be symmetric, so pick the set of starts that is best for the worst-off
+ * seat: each start is worth its share of the land (tiles nearer to it than to any other start) plus
+ * its site score, and starts are at least 6 apart. Greedy farthest-point sets from every candidate,
+ * then one round of single swaps on the best few. Seats are then shuffled, so no seat is favoured.
+ */
+function fairStarts(map: GameMap, seats: number, good: { id: TileId; s: number }[], rng: () => number): TileId[] | null {
+  const land = map.tiles.filter((t) => isPassable(map, t.id)).map((t) => t.id)
+  const site = new Map(good.map((c) => [c.id, c.s]))
+  const worth = (set: TileId[]): number => {
+    for (let i = 0; i < set.length; i++) for (let j = i + 1; j < set.length; j++) if (distance(map, set[i], set[j]) < 6) return -Infinity
+    const area = new Array(set.length).fill(0)
+    for (const t of land) {
+      let best = Infinity
+      let at: number[] = []
+      set.forEach((st, i) => {
+        const d = distance(map, st, t)
+        if (d < best) [best, at] = [d, [i]]
+        else if (d === best) at.push(i)
+      })
+      for (const i of at) area[i] += 1 / at.length
     }
-    if (!pick) return null
-    chosen.push(pick.id)
+    return Math.min(...set.map((st, i) => area[i] + site.get(st)! * 0.2))
   }
-  return chosen
+  const cands = good.length > 40 ? good.filter((_, i) => i % Math.ceil(good.length / 40) === 0) : good
+  const sets: { set: TileId[]; v: number }[] = []
+  for (const first of cands) {
+    const set = [first.id]
+    while (set.length < seats) {
+      let pick: TileId | null = null
+      let far = -1
+      for (const c of cands) {
+        const d = Math.min(...set.map((st) => distance(map, st, c.id)))
+        if (d > far) [far, pick] = [d, c.id]
+      }
+      set.push(pick!)
+    }
+    sets.push({ set, v: worth(set) })
+  }
+  sets.sort((a, b) => b.v - a.v)
+  let best = sets[0]
+  for (const start of sets.slice(0, 3)) {
+    const cur = { set: [...start.set], v: start.v }
+    for (let i = 0; i < seats; i++) {
+      for (const c of cands) {
+        if (cur.set.includes(c.id)) continue
+        const trial = cur.set.map((st, j) => (j === i ? c.id : st))
+        const v = worth(trial)
+        if (v > cur.v) [cur.set, cur.v] = [trial, v]
+      }
+    }
+    if (cur.v > best.v) best = cur
+  }
+  if (best.v === -Infinity) return null
+  const order = [...best.set]
+  for (let i = order.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1))
+    ;[order[i], order[j]] = [order[j], order[i]]
+  }
+  return order
 }
 
 function connected(map: GameMap, starts: TileId[]): boolean {
