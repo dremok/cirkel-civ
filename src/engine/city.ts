@@ -27,30 +27,30 @@ export interface BuildingOrder {
 export type Placement = 'any' | 'inner' | 'outer'
 
 export interface BuildingInfo {
-  name: string // Swedish, shown in the UI
+  name: string // shown in the UI
   cost: number
   placement: Placement
   /** Needs a citizen to produce anything. */
   worker: boolean
   /** Outer plots only: at least one faced tile must have one of these biomes. */
   faces?: Biome[]
-  desc: string // one short Swedish line
+  desc: string // one short line
 }
 
 export const BUILDINGS: Record<BuildingType, BuildingInfo> = {
-  house: { name: 'Hus', cost: 15, placement: 'any', worker: false, desc: 'Plats för 2 invånare till.' },
-  farm: { name: 'Gård', cost: 20, placement: 'outer', worker: true, faces: ['grass', 'plains'], desc: 'Mat, mer ju bördigare marken den vetter mot är.' },
-  sawmill: { name: 'Såg', cost: 20, placement: 'outer', worker: true, faces: ['forest', 'hills'], desc: 'Produktion från skogen och kullarna utanför.' },
-  workshop: { name: 'Verkstad', cost: 30, placement: 'inner', worker: true, desc: 'Produktion, +1 för varje verkstad eller såg bredvid.' },
-  market: { name: 'Marknad', cost: 35, placement: 'inner', worker: true, desc: 'Mat och produktion, +1 mat för varje hus bredvid.' },
-  harbor: { name: 'Hamn', cost: 25, placement: 'outer', worker: true, faces: ['shallow', 'deep'], desc: 'Mat från havet.' },
-  barracks: { name: 'Kasern', cost: 30, placement: 'inner', worker: false, desc: 'Alla enheter kostar 25 % mindre.' },
-  temple: { name: 'Tempel', cost: 40, placement: 'inner', worker: true, desc: 'Poäng, och staden växer snabbare.' },
-  tower: { name: 'Torn', cost: 25, placement: 'outer', worker: false, desc: 'Staden skjuter längre och hårdare åt det hållet.' },
-  wall: { name: 'Mur', cost: 20, placement: 'outer', worker: false, desc: '+50 % i försvar mot anfall från det hållet.' },
+  house: { name: 'House', cost: 15, placement: 'any', worker: false, desc: 'Room for 2 more citizens.' },
+  farm: { name: 'Farm', cost: 20, placement: 'outer', worker: true, faces: ['grass', 'plains'], desc: 'Food, more the richer the land it faces.' },
+  sawmill: { name: 'Sawmill', cost: 20, placement: 'outer', worker: true, faces: ['forest', 'hills'], desc: 'Production from the forests and hills outside.' },
+  workshop: { name: 'Workshop', cost: 30, placement: 'inner', worker: true, desc: 'Production, +1 for each neighbouring workshop or sawmill.' },
+  market: { name: 'Market', cost: 35, placement: 'inner', worker: true, desc: 'Food and production, +1 food for each neighbouring house.' },
+  harbor: { name: 'Harbor', cost: 25, placement: 'outer', worker: true, faces: ['shallow', 'deep'], desc: 'Food from the sea.' },
+  barracks: { name: 'Barracks', cost: 30, placement: 'inner', worker: false, desc: 'All units cost 25% less.' },
+  temple: { name: 'Temple', cost: 40, placement: 'inner', worker: true, desc: 'Score, and the city grows faster.' },
+  tower: { name: 'Tower', cost: 25, placement: 'outer', worker: false, desc: 'The city shoots further and harder on this side.' },
+  wall: { name: 'Wall', cost: 20, placement: 'outer', worker: false, desc: '+50% defence against attacks from this side.' },
 }
 
-export const FOCUS_NAMES: Record<CityFocus, string> = { growth: 'Tillväxt', production: 'Produktion', balance: 'Balans' }
+export const FOCUS_NAMES: Record<CityFocus, string> = { growth: 'Growth', production: 'Production', balance: 'Balance' }
 
 export const PLOT_COUNT = 19
 export const SQUARE_YIELD = { food: 2, prod: 2 }
@@ -135,22 +135,22 @@ export function newInterior(): CityInterior {
 }
 
 export function canPlace(map: GameMap, tile: TileId, interior: CityInterior, building: BuildingType, plot: number): { ok: boolean; reason?: string } {
-  if (plot <= 0 || plot >= PLOT_COUNT) return { ok: false, reason: 'Torget går inte att bygga på.' }
-  if (interior.plots[plot] !== null) return { ok: false, reason: 'Tomten är redan bebyggd.' }
+  if (plot <= 0 || plot >= PLOT_COUNT) return { ok: false, reason: 'The square cannot be built on.' }
+  if (interior.plots[plot] !== null) return { ok: false, reason: 'This plot is already built on.' }
   const info = BUILDINGS[building]
   const ring = PLOTS[plot].ring
-  if (info.placement === 'inner' && ring !== 1) return { ok: false, reason: 'Måste ligga i den inre ringen.' }
-  if (info.placement === 'outer' && ring !== 2) return { ok: false, reason: 'Måste ligga i den yttre ringen.' }
+  if (info.placement === 'inner' && ring !== 1) return { ok: false, reason: 'Must be in the inner ring.' }
+  if (info.placement === 'outer' && ring !== 2) return { ok: false, reason: 'Must be in the outer ring.' }
   if (info.faces && !facedBiomes(map, tile, plot).some((b) => info.faces!.includes(b))) {
-    return { ok: false, reason: `Måste vetta mot ${facesText(info.faces)}.` }
+    return { ok: false, reason: `Must face ${facesText(info.faces)}.` }
   }
   return { ok: true }
 }
 
 function facesText(b: Biome[]): string {
-  if (b.includes('forest')) return 'skog eller kullar'
-  if (b.includes('grass')) return 'gräs eller slätt'
-  return 'vatten'
+  if (b.includes('forest')) return 'forest or hills'
+  if (b.includes('grass')) return 'grassland or plains'
+  return 'water'
 }
 
 /** What one building would produce if staffed (before the worker check). */

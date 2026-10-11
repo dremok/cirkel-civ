@@ -84,8 +84,8 @@ imports from it). Tune values if they look wrong under the final lighting, but k
 ## Pieces (pieces agent)
 
 - **Units are painted miniatures.** A small figurine on a round base ringed in the player colour,
-  about 45 % of a hex across. Clear silhouettes: *Spjutbärare* (long spear and round shield),
-  *Bågskytt* (bow and quiver), *Ryttare* (horse and rider with a pennant), *Nybyggare* (a figure
+  about 45 % of a hex across. Clear silhouettes: *Spearman* (long spear and round shield),
+  *Archer* (bow and quiver), *Rider* (horse and rider with a pennant), *Settler* (a figure
   with a handcart or bundle and a little banner). Low-poly, smooth, player colour on tunic, shield and
   banner, neutral skin, wood and steel. Built procedurally from primitives (or GLB if worth it).
 - **Health** as a thin elegant arc around the base, hidden at full health. **Stance** as a tiny glyph
@@ -118,4 +118,4 @@ imports from it). Tune values if they look wrong under the final lighting, but k
 - Motion: gentle easing `cubic-bezier(.2,.7,.2,1)`, 180 to 320 ms. Nothing bounces.
 - Mobile first. Thumb-reachable controls at the bottom, 44 px touch targets, no hover-only
   information, safe-area insets.
-- The UI is in Swedish.
+- The UI is in English: natural, concise, tasteful game English.

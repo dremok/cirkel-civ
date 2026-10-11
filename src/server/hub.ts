@@ -39,8 +39,8 @@ const LIST_LIMIT = 50
 const hashToken = (token: string) => createHash('sha256').update(token).digest('hex')
 const botSeat = (i: number): SeatRecord => ({ kind: 'bot', name: `Bot ${i + 1}`, tokenHash: null })
 const openSeat = (): SeatRecord => ({ kind: 'open', name: null, tokenHash: null })
-/** Swedish genitive: "Annas spel", "Lars spel". */
-const defaultName = (player: string) => `${player}${/[sxz]$/i.test(player) ? '' : 's'} spel`
+/** "Anna's game", "Lars' game". */
+const defaultName = (player: string) => `${player}${/s$/i.test(player) ? "'" : "'s"} game`
 
 export interface HubOptions {
   /** Lobbies untouched this long, with nobody connected, are deleted. */
