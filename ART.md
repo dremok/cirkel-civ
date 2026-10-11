@@ -9,6 +9,32 @@ Think: a hand-crafted miniature world in late-afternoon light. References for mo
 Bad North, Townscaper, Dorfromantik, Islanders, Oskar Stålberg's work, Monument Valley's palette
 discipline, Alto's Odyssey's atmosphere. Every screenshot should look like a key art frame.
 
+## Direction update (2026-10-12): dreamier, richer, more detailed
+
+The first renders are clean but too plain and too evenly coloured. Push further:
+
+- **Dreamy.** Soft, glowing late-afternoon light that feels slightly enchanted: gentle bloom on
+  highlights and water glints, airy haze layering into the distance, light mist pooling in low
+  valleys and over the sea, drifting pollen or dust motes catching the sun, a sky with soft peach,
+  apricot and lilac gradients and a few painterly clouds. Colour-graded like a picture book: shadows
+  lifted toward blue-violet, highlights warm and golden. A very gentle tilt-shift depth of field
+  at close zoom if it helps the miniature dream. Never murky, never foggy-grey.
+- **More flavours in the colours.** Variation in *hue*, not just lightness. Meadows mixing sage,
+  spring green and chartreuse with drifts of wildflowers (poppy red, lavender, buttercup, white);
+  forests mixing deep teal pines, olive and emerald broadleaf, with gold and rust autumn accents;
+  plains in honey, wheat and apricot; beaches from cream to rose-tinted sand; rocks in warm grey,
+  plum and slate with moss and lichen; water from luminous aquamarine shallows through turquoise to
+  deep ultramarine-teal. Strata sides as warm painted earth bands (ochre, rust, umber, plum rock).
+- **More detail, still clean.** Tiles get gentle relief and texture-like variation in their tops
+  (soft colour mottling, tiny stones, clover, moss patches), crisp bevels and painted edges. Trees
+  get several species with layered canopies, visible trunks, soft translucency in the sun, and
+  variety in size. Objects: rocks with facets and moss, flower clusters, mushrooms and ferns in
+  forests, fallen logs, reeds at the shore, wheat that sways. Units become finely crafted
+  miniatures: helmets, faces, capes, shield emblems in the player colour, a detailed horse and
+  saddle, a settler's cart with wheels and bundles, banners that flutter, tiny idle motions.
+- **Detail serves the dream, not noise.** Every addition must read as lovely at the default zoom
+  and stay calm. Clarity of gameplay still wins over decoration.
+
 ## Principles
 
 1. **Clarity first.** Art never hides gameplay. One glance tells you: terrain, height, whose unit,
