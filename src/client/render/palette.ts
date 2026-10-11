@@ -18,9 +18,10 @@ export const NATURE = {
   pine: '#2F5D46', pineLight: '#3F7656',
   broadleaf: '#4F7F3A', broadleafLight: '#6C9A45', amber: '#C8873A', rust: '#B5642F',
   rock: '#8F8B78',
-  earth: '#8A6E52', strataRock: '#6E6259', base: '#4B4440',
+  earth: '#A2825F', strataLight: '#978A7C', strataRock: '#857868', strataDeep: '#7A6E64', base: '#655C55',
+  trunk: '#6B5040', wheat: '#E3CB7E', flowerA: '#F4EFE2', flowerB: '#F2CF5B', flowerC: '#D99AB8',
   skyZenith: '#8FB8D8', skyHorizon: '#F3E3CC',
-  sun: '#FFE2B8', skyFill: '#9BB8D6', groundBounce: '#C9B08A',
+  sun: '#FFDAAA', skyFill: '#9BB8D6', groundBounce: '#C9B08A',
 }
 
 export interface PlayerColor { name: string; base: string; light: string; dark: string }
