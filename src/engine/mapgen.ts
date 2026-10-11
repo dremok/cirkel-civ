@@ -9,15 +9,18 @@ import type { Biome, GameMap, Tile, TileId } from './types.ts'
 
 // Height bands by elevation percentile. Water below 35 %.
 const LAND_BANDS: [number, number][] = [
-  // [cumulative percentile, height]
-  [0.53, 2],
-  [0.7, 3],
-  [0.83, 4],
-  [0.91, 5],
-  [0.96, 6],
-  [0.985, 7],
+  // [cumulative percentile, height]: about 30 % of land at 2, 25 % at 3, 18 % at 4, 12 % at 5,
+  // 8 % at 6, 4.5 % at 7 and 2.5 % at 8, so the interior climbs and height matters.
+  [0.3, 2],
+  [0.55, 3],
+  [0.73, 4],
+  [0.85, 5],
+  [0.93, 6],
+  [0.975, 7],
   [1.01, 8],
 ]
+/** Low coast only becomes beach where it is dry (moisture percentile below this). */
+const BEACH_MOISTURE = 0.5
 const WATER_FRACTION = 0.35
 
 export function generateMap(seed: string, seats: number, size: keyof typeof MAP_SIZES = 'small'): GameMap {
@@ -127,7 +130,7 @@ function biomeFor(map: GameMap, t: Tile): Biome {
   if (h >= 8) return 'snow'
   if (h === 7) return 'mountain'
   if (h >= 5) return t.moisture > 0.7 && h === 5 ? 'forest' : 'hills'
-  if (h === 2 && neighbors(map, t.id).some((nb) => map.tiles[nb].height < 2)) return 'beach'
+  if (h === 2 && t.moisture < BEACH_MOISTURE && neighbors(map, t.id).some((nb) => map.tiles[nb].height < 2)) return 'beach'
   if (t.moisture > 0.66) return 'forest'
   if (t.moisture > 0.3) return 'grass'
   return 'plains'
@@ -167,7 +170,8 @@ function pickStarts(map: GameMap, seats: number, symmetric: boolean, rng: () => 
       if (!pick || v > pick.v) pick = { id: c.id, v }
     }
     if (!pick) return null
-    return [pick.id, mirror(pick.id, W, H)]
+    // A site and its mirror always tie: let the seed, not tile order, decide who gets which half.
+    return rng() < 0.5 ? [pick.id, mirror(pick.id, W, H)] : [mirror(pick.id, W, H), pick.id]
   }
 
   return fairStarts(map, seats, good, rng)

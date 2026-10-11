@@ -44,10 +44,11 @@ seat is fair.
 
 - `path`: tiles to enter in order (each a neighbour of the previous). Ending on an enemy unit or city
   is an attack. Paths longer than one turn continue automatically next turn.
-- `stance`: `cautious` (stops when an enemy shows up next to it), `aggressive` (attacks adjacent
-  enemies), `hold` (never moves, +50 % defence, archers shoot the first enemy in range).
-- `found`: settlers found a city when their path is done. `target`: archers' preferred volley tile.
-- City builds: `spear`, `archer`, `rider`, `settler`, `walls`, or `null`.
+- `stance`: `cautious` (Cautious: stops when an enemy shows up next to it), `aggressive`
+  (Aggressive: attacks adjacent enemies), `hold` (Hold: never moves, +50 % defence, Archers shoot the
+  first enemy in range).
+- `found`: Settlers found a city when their path is done. `target`: an Archer's preferred volley tile.
+- City builds: `spear` (Spearman), `archer`, `rider`, `settler`, `walls`, or `null`.
 - Units you do not mention keep their previous orders. Invalid orders are cleaned or ignored, never
   an error, so a policy cannot crash the game. `moves` gives exactly the legal one-turn destinations,
   which is handy as an action mask.

@@ -22,23 +22,33 @@ export interface CityYield {
 
 /**
  * Worked tiles for every city. Each tile within radius 2 of a city belongs to the nearest city (ties:
- * the older city, then the lower id); city centres and tiles with enemy units are never worked.
- * A city works its `pop` best tiles: most food + production, ties to more food.
+ * the older city; between the same player's cities, the lower id). A tile equally near to two
+ * players' cities of the same age is a border tile nobody works, so neither seat wins ties by id.
+ * City centres and tiles with enemy units are never worked. A city works its `pop` best tiles:
+ * most food + production, ties to more food.
  */
 export function cityYields(state: GameState): Map<number, CityYield> {
   const { map } = state
   const n = map.tiles.length
+  // Per tile: the best (distance, founding turn) claim, and which city / players hold it.
   const owner = new Int32Array(n).fill(-1) // index into state.cities
-  const ownerDist = new Int32Array(n).fill(CITY_WORK_RADIUS + 1)
+  const bestD = new Int32Array(n).fill(CITY_WORK_RADIUS + 1)
+  const bestF = new Float64Array(n).fill(Infinity)
+  const border = new Uint8Array(n)
   const centre = new Uint8Array(n)
   for (const c of state.cities) centre[c.tile] = 1
   state.cities.forEach((c, ci) => {
     for (const t of tilesInRange(map, c.tile, CITY_WORK_RADIUS)) {
       const d = distance(map, c.tile, t)
-      const o = owner[t] >= 0 ? state.cities[owner[t]] : null
-      if (!o || d < ownerDist[t] || (d === ownerDist[t] && (c.founded < o.founded || (c.founded === o.founded && c.id < o.id)))) {
+      if (d < bestD[t] || (d === bestD[t] && c.founded < bestF[t])) {
         owner[t] = ci
-        ownerDist[t] = d
+        bestD[t] = d
+        bestF[t] = c.founded
+        border[t] = 0
+      } else if (d === bestD[t] && c.founded === bestF[t]) {
+        const o = state.cities[owner[t]]
+        if (o.owner !== c.owner) border[t] = 1
+        else if (c.id < o.id) owner[t] = ci
       }
     }
   })
@@ -47,7 +57,7 @@ export function cityYields(state: GameState): Map<number, CityYield> {
   const tiles: TileId[][] = state.cities.map(() => [])
   for (let t = 0; t < n; t++) {
     const ci = owner[t]
-    if (ci < 0 || centre[t]) continue
+    if (ci < 0 || centre[t] || border[t]) continue
     if (unitOwner[t] === -1 || unitOwner[t] === state.cities[ci].owner) tiles[ci].push(t)
   }
   const out = new Map<number, CityYield>()

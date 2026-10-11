@@ -38,7 +38,7 @@ export function newUnit(state: GameState, owner: PlayerId, type: UnitType, tile:
 
 export function newCity(state: GameState, owner: PlayerId, tile: TileId, capital = false): City {
   const used = new Set(state.cities.map((c) => c.name))
-  const name = CITY_NAMES.find((n) => !used.has(n)) ?? `Stad ${state.cities.length + 1}`
+  const name = CITY_NAMES.find((n) => !used.has(n)) ?? `City ${state.cities.length + 1}`
   return {
     id: state.nextId++, owner, name, tile, pop: 1, food: 0, prod: 0, hp: CITY_MAX_HP,
     walls: false, build: null, capital, founded: state.turn,

@@ -3,6 +3,10 @@
 The precise ruleset implemented by `src/engine/rules.ts`. SPEC.md is the design; where it is silent or
 loose, this file decides. Numbers live in `src/engine/config.ts` and `src/engine/economy.ts`.
 
+Units: **Spearman** (`spear`), **Archer** (`archer`), **Rider** (`rider`), **Settler** (`settler`).
+Stances: **Cautious** (`cautious`), **Aggressive** (`aggressive`), **Hold** (`hold`). The code names
+in brackets are what orders and events use.
+
 ## 1. A turn
 
 1. **Planning.** Every player gives orders in secret (`PlayerOrders`).
@@ -21,18 +25,18 @@ There is no randomness anywhere in the rules. The same state and orders always g
 - **Cleaning.** Orders for units or cities you do not own, unknown ids and malformed values are
   ignored. A path keeps its longest valid prefix: each step must be a passable neighbour of the
   previous tile, at most 64 steps. An enemy city ends a path (you attack it). Settlers stop before any
-  tile held by an enemy. Choosing **hold** clears the path.
+  tile held by an enemy. Choosing **Hold** clears the path.
 
 ## 3. Movement
 
-- At the start of every tick each unit gains **speed** points (spear, archer, settler 2; rider 3).
-  Units on hold, and units that have stopped for the turn, gain nothing. Points reset every turn.
+- At the start of every tick each unit gains **speed** points (Spearman, Archer, Settler 2; Rider 3).
+  Units on Hold, and units that have stopped for the turn, gain nothing. Points reset every turn.
 - **Step cost** into a neighbour: `6 x terrain + 3 x levels climbed`, terrain 1 for grass, plains and
   beach, 2 for forest and hills. Going down is free. The cost is capped at `6 x speed`, so any
   passable neighbour can be entered within one turn.
 - Water, mountains and snow are impassable, and so is a height difference of more than 2 (a cliff).
 - A unit steps when its points reach the cost of its next step, at most one step per tick, and pays
-  the cost. On flat ground a spear steps at ticks 3 and 6, a rider at ticks 2, 4 and 6. A unit that
+  the cost. On flat ground a Spearman steps at ticks 3 and 6, a Rider at ticks 2, 4 and 6. A unit that
   has to wait keeps collecting points (but still takes at most one step per tick).
 - `pathTiming` in `paths.ts` gives exactly these ticks for an unobstructed path, and `findPath`
   returns the path that arrives first (not the cheapest one: points left at the end of a turn are lost).
@@ -48,9 +52,9 @@ Every unit that is ready picks its step for this tick. **Ready** means its point
 - **Aggressive:** if its next path tile holds an enemy unit or city, it attacks it. Otherwise, if any
   enemy unit is next to it, it lunges at the **weakest** one (fewest hp, then the one it would hurt
   most, then lowest id) and does not walk on. A lunge only hits an enemy that stays put: if the enemy
-  steps away this tick, the aggressive unit stays where it is.
-- **Hold:** never moves. +50 % defence. Archers on hold keep **overwatch** (4.5).
-- **Settlers** never attack; an aggressive settler behaves as a cautious one.
+  steps away this tick, the Aggressive unit stays where it is.
+- **Hold:** never moves. +50 % defence. Archers on Hold keep **overwatch** (4.5).
+- **Settlers** never attack; an Aggressive Settler behaves as a Cautious one.
 
 ### 4.2 Meetings
 
@@ -58,7 +62,7 @@ Every unit that is ready picks its step for this tick. **Ready** means its point
 - **Same tile:** when units of two or more players step into the same tile, and that tile is empty or
   is being left this tick, they meet in it (`clash` with the tile). Each player is represented by one
   unit (see 4.3); with three players every pair clashes.
-- In a clash both sides fight with **attack strength** (settlers use their defence), type bonus and
+- In a clash both sides fight with **attack strength** (Settlers use their defence), type bonus and
   health only: no terrain, height, stance or city modifiers. Nobody enters the tile. Both units stop
   for the rest of the turn and keep their paths.
 
@@ -78,7 +82,7 @@ Every unit that is ready picks its step for this tick. **Ready** means its point
   at once. Both sides take damage.
 - **Attacking ends the attacker's movement for the turn.** The defender is **engaged**: it is done
   for the turn too, no more moves or attacks (`halt` `engaged` if it had a path). So the faster unit
-  strikes first and pins its target: a rider can catch an archer before it gets away.
+  strikes first and pins its target: a Rider can catch an Archer before it gets away.
 - If the defender dies and the surviving attackers all belong to one player, the one that dealt the
   most damage **advances** into the tile (it consumes that step of its path, or drops its path if it
   was a lunge). Nobody advances into a city that still has hp.
@@ -91,14 +95,14 @@ Every unit that is ready picks its step for this tick. **Ready** means its point
 
 ### 4.5 Overwatch
 
-At the end of every tick, an archer on **hold** that has neither fired nor fought this turn shoots if
+At the end of every tick, an Archer on **Hold** that has neither fired nor fought this turn shoots if
 an enemy unit is in range: its ordered target if that tile holds one, otherwise the weakest in range
 (fewest hp, then most damage, then lowest id). It fires once per turn; if nothing came into range it
 volleys at tick 7 like everyone else.
 
 ### 4.6 Contact
 
-At the end of every tick, a **cautious** unit (or a settler) that still has a path and has an enemy
+At the end of every tick, a **Cautious** unit (or a Settler) that still has a path and has an enemy
 unit next to it that was not next to it at the start of the tick **stops and drops its orders**
 (path and founding flag; `halt` `contact`). Exception: its next step is the explicit attack at the
 end of its path.
@@ -107,11 +111,11 @@ end of its path.
 
 All at once, from the state after tick 6:
 
-- Every **archer** that has not fought in melee or a clash and has not fired: its ordered `target` if
+- Every **Archer** that has not fought in melee or a clash and has not fired: its ordered `target` if
   it is in range (an enemy unit there, or else an enemy city there); otherwise the weakest enemy unit
   in range; otherwise the enemy city in range with the least hp.
 - Every **city** with hp > 0 shoots the weakest enemy unit within 2.
-- **Range:** 2 for archers and cities, +1 when the shooter stands 2 or more levels above the target.
+- **Range:** 2 for Archers and cities, +1 when the shooter stands 2 or more levels above the target.
 - **Garrisons are safe from arrows** while their city has hp: shots at a city tile hit the city. Once
   the city is at 0 hp (breached), its garrison can be shot.
 
@@ -122,38 +126,39 @@ sides take damage; shots only hurt the target. Units have 10 hp, cities 20.
 
 `strength = base x type bonus x health x (1 + bonuses)`
 
-- **base:** attack or defence (or ranged) from the unit table; settlers attack with 0.
-- **type bonus:** spears fight riders at x2, attacking or defending.
+- **base:** attack or defence (or ranged) from the unit table; Settlers attack with 0.
+- **type bonus:** Spearmen fight Riders at x2, attacking or defending.
 - **health:** `0.5 + 0.5 x hp / max hp`, so a dying unit fights at about half strength.
 - **bonuses** (added up): higher ground +15 % per level above the opponent, at most +45 % (attacker or
-  defender, and for shots); for the defender only: forest +25 %, hold +50 %, inside its own city +50 %,
+  defender, and for shots); for the defender only: forest +25 %, Hold +50 %, inside its own city +50 %,
   walls +50 %.
 - **Cities:** defence 4, shooting 3, both scaled by the city's health and height; walls add +50 % to
   defence.
 
-| Unit    | Cost | Speed | Attack | Defence | Special                                   |
-|---------|------|-------|--------|---------|-------------------------------------------|
-| Spear   | 20   | 2     | 4      | 4       | x2 against riders                         |
-| Archer  | 25   | 2     | 2      | 2       | shoots 4 at range 2                       |
-| Rider   | 30   | 3     | 5      | 3       | fastest                                   |
-| Settler | 30   | 2     | 0      | 1       | founds a city; costs the city one citizen |
-| Walls   | 30   |       |        |         | +50 % defence for the city and garrison   |
+| Unit     | Cost | Speed | Attack | Defence | Special                                   |
+|----------|------|-------|--------|---------|-------------------------------------------|
+| Spearman | 20   | 2     | 4      | 4       | x2 against Riders                         |
+| Archer   | 25   | 2     | 2      | 2       | shoots 4 at range 2                       |
+| Rider    | 30   | 3     | 5      | 3       | fastest                                   |
+| Settler  | 30   | 2     | 0      | 1       | founds a city; costs the city one citizen |
+| Walls    | 30   |       |        |         | +50 % defence for the city and garrison   |
 
 ## 7. Tick 8: end of turn, in order
 
-1. **Founding.** A settler with `found` set and an empty path founds a city on its tile. It fails
-   (`foundFailed`, flag dropped) if any city is within 2 tiles (`tooClose`), or if another settler
+1. **Founding.** A Settler with `found` set and an empty path founds a city on its tile. It fails
+   (`foundFailed`, flag dropped) if any city is within 2 tiles (`tooClose`), or if another Settler
    founds within 2 tiles this turn: then **both** fail (`conflict`). A new city has 1 citizen.
 2. **Cities**, oldest first:
-   - **Tiles.** Every tile within 2 of a city belongs to the nearest city (ties: the older city, then
-     the lower id). A city works its centre plus its `pop` best own tiles (most food + production,
+   - **Tiles.** Every tile within 2 of a city belongs to the nearest city (ties: the older city;
+     between one player's own cities, the lower id). A tile equally near to two players' cities of
+     the same age is a border tile that nobody works. A city works its centre plus its `pop` best own tiles (most food + production,
      ties to more food), never a tile with an enemy unit on it. The centre yields its terrain
      plus 1 food and 2 production.
    - **Production** is added to the store. If the store covers the build, it completes (one item per
      turn) and the rest carries over; unit builds repeat, walls do not. A new unit appears on the
      city tile, or on the free passable neighbour nearest the middle of the map (ties: the
-     counter-clockwise one as seen from the city). With no free tile, or a settler from a city of
-     1, the build waits. A settler costs the city one citizen.
+     counter-clockwise one as seen from the city). With no free tile, or a Settler from a city of
+     1, the build waits. A Settler costs the city one citizen.
    - **Food:** each citizen eats 2. The store never drops below 0. The city grows when it holds
      `10 + 5 x pop + pop²` food (16, 24, 34, 46, 60, ...); the rest carries over.
 3. **Healing.** Units that took no damage this turn heal 1 hp, or 3 hp inside their own city.
@@ -164,11 +169,13 @@ sides take damage; shots only hurt the target. Units have 10 hp, cities 20.
 
 ## 8. Fairness
 
-Two-player maps are point-symmetric, and seat 1 starts with the mirror image of seat 0's units. The
-rules contain no direction-dependent tie-breaks, so a mirrored position resolves to the mirrored
-result (tested in `test/game.test.ts`). Remaining tie-breaks use unit or city ids. Maps for three or
-four players cannot be symmetric: the generator picks the starts that are best for the worst-off
-seat (share of the land plus site quality, at least 6 apart) and then shuffles the seats.
+Two-player maps are point-symmetric, seat 1 starts with the mirror image of seat 0's units, and the
+seed (not tile order) decides which half of the map each seat gets. The rules contain no
+direction-dependent tie-breaks, so a mirrored position resolves to the mirrored result (tested in
+`test/game.test.ts`). The remaining tie-breaks use ids: between one player's own pieces, or when a
+unit picks among equally weak enemies to attack or shoot. Maps for three or four players cannot be
+symmetric: the generator picks the starts that are best for the worst-off seat (share of the land
+plus site quality, at least 6 apart) and then shuffles the seats.
 
 ## 9. What players see
 
@@ -186,9 +193,9 @@ visible.
 | `capture` | 1-6 | a city changed hands |
 | `shot` | 1-7 | overwatch (1-6) or volley (7) |
 | `death` | 1-8 | a unit died (8: its player was eliminated) |
-| `halt` | 1-6 | `contact` (cautious stop), `engaged` (attacked), `blocked` (end of tick 6) |
+| `halt` | 1-6 | `contact` (Cautious stop), `engaged` (attacked), `blocked` (end of tick 6) |
 | `found`, `foundFailed` | 8 | founding |
-| `spawn`, `built`, `grow` | 8 | production (`built` is walls) and population; `grow` also reports shrinking (settler built, or a capture at ticks 1-6) |
+| `spawn`, `built`, `grow` | 8 | production (`built` is walls) and population; `grow` also reports shrinking (Settler built, or a capture at ticks 1-6) |
 | `heal` | 8 | a unit healed (new hp) |
 | `eliminated`, `victory` | 8 | end of a player, end of the game |
 
