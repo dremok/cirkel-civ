@@ -25,7 +25,17 @@ export interface World {
   /** Call when the container changes size. */
   resize(): void
   dispose(): void
+  // Optional extras (world agent):
+  /** Current render quality tier (auto-detected, lowered automatically if frames are slow). */
+  readonly quality?: WorldQuality
+  /** Force a quality tier, or 'auto' to detect and adapt. */
+  setQuality?(q: WorldQuality | 'auto'): void
+  /** Return the camera to the default framing of the whole board. */
+  home?(animate?: boolean): void
 }
+
+/** 'ultra' adds screen-space ambient occlusion; it is never picked automatically. */
+export type WorldQuality = 'low' | 'medium' | 'high' | 'ultra'
 
 // ---------------------------------------------------------------------------------------------
 // GameView: owned by the pieces agent (src/client/render/index.ts + pieces/). Used by the UI.
@@ -41,6 +51,8 @@ export interface UnitPlan {
   steps: PlanStep[]
   kind: 'move' | 'attack' | 'found'
   stance: Stance
+  /** Archers: preferred volley target tile (a reticle with a dashed arc from where the archer ends up). Steps may be empty. */
+  target?: TileId | null
 }
 
 export interface Selection {

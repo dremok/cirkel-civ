@@ -7,6 +7,7 @@ import { BUILD_ICON, Icon, STANCE_ICON } from '../icons.tsx'
 import {
   ARCHER_HOLD_HINT, BIOME_NAME, BUILD_NAME, BUILD_SHORT, possessive, STANCE_HINT, STANCE_NAME, tapVerb, turnsWord, UNIT_NAME, unitNoun,
 } from '../strings.ts'
+import { inRange, unitRange } from '../../../engine/combat.ts'
 import type { CityEconomy } from './economy.ts'
 import { cityBuild, foundingCheck, isEnemyAt, planKind, planSteps, unitAt, unitOrder, type Draft } from './planning.ts'
 
@@ -75,6 +76,9 @@ function arrival(turn: number, tick: number): string {
 function orderLine(state: GameState, draft: Draft, me: PlayerId, u: Unit): { icon: Parameters<typeof Icon>[0]['name']; text: string } {
   const o = unitOrder(draft, u)
   const target = o.target != null ? targetName(state, me, o.target) : null
+  // The volley is fired from wherever the archer ends this turn.
+  const from = planSteps(state, u.id, o.path).filter((st) => st.turn === 0).at(-1)?.tile ?? u.tile
+  const range = o.target != null && !inRange(state.map, from, o.target, unitRange(u)) ? ' (out of range)' : ''
   if (o.found) {
     const { tooClose } = foundingCheck(state, draft, u)
     if (tooClose) return { icon: 'flag', text: `Too close to ${tooClose.name} to found a city` }
@@ -87,12 +91,12 @@ function orderLine(state: GameState, draft: Draft, me: PlayerId, u: Unit): { ico
     const steps = planSteps(state, u.id, o.path)
     const last = steps[steps.length - 1]
     const kind = planKind(state, me, o)
-    const volley = target ? ` · volley at ${target}` : ''
+    const volley = target ? ` · volley at ${target}${range}` : ''
     if (kind === 'attack') return { icon: 'swords', text: `Attacks ${targetName(state, me, last.tile) ?? 'the enemy'}, ${arrival(last.turn, last.tick)}${volley}` }
     const n = o.path.length
     return { icon: 'arrowRight', text: `Moves ${n === 1 ? '1 step' : `${n} steps`}, arriving ${arrival(last.turn, last.tick)}${volley}` }
   }
-  if (target) return { icon: 'target', text: `Volley at ${target} at the end of the turn` }
+  if (target) return { icon: 'target', text: `Volley at ${target}${range}` }
   if (o.stance === 'hold') return { icon: 'shield', text: u.type === 'archer' ? 'Holding and keeping watch' : 'Holding its ground' }
   const v = tapVerb()
   if (u.type === 'archer') return { icon: 'minus', text: `No orders. ${v} a tile to move, or an enemy to shoot at.` }
@@ -166,7 +170,7 @@ export function UnitPanel({ state, draft, me, unit, editable, hint, actions, onC
           </div>
           <p className="stance-hint">{o.stance === 'hold' && unit.type === 'archer' ? ARCHER_HOLD_HINT : STANCE_HINT[o.stance]}</p>
 
-          {(unit.type === 'settler' || o.target != null) && (
+          {(unit.type === 'settler' || (o.target != null && o.path.length > 0)) && (
             <div className="panel-actions">
               {unit.type === 'settler' && (
                 <button className={`btn btn-sm ${o.found ? 'btn-primary' : 'btn-ghost'}`} onClick={actions.toggleFound} aria-pressed={!!o.found}>
@@ -174,7 +178,7 @@ export function UnitPanel({ state, draft, me, unit, editable, hint, actions, onC
                   {o.found ? 'Founding city' : o.path.length ? 'Found at destination' : 'Found city here'}
                 </button>
               )}
-              {o.target != null && (
+              {o.target != null && o.path.length > 0 && (
                 <button className="btn btn-sm btn-ghost" onClick={actions.clearTarget}>
                   <Icon name="target" size={17} />
                   No volley
