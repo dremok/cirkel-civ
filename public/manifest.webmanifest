@@ -1,0 +1,15 @@
+{
+  "name": "Cirkel-Civ",
+  "short_name": "Cirkel-Civ",
+  "description": "Everyone plans at once. Everything happens at once.",
+  "lang": "en",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#F7F2E8",
+  "theme_color": "#F7F2E8",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

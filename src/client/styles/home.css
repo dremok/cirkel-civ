@@ -1,0 +1,130 @@
+/* Home: emblem, title, the two ways to play, the list of games. */
+
+.home {
+  min-height: 100%;
+  padding: calc(var(--safe-t) + 28px) 20px calc(var(--safe-b) + 28px);
+  display: grid;
+  justify-items: center;
+  align-content: start;
+  gap: 28px;
+  background:
+    radial-gradient(90% 46% at 50% 4%, rgba(143, 184, 216, 0.16) 0%, rgba(243, 227, 204, 0.32) 46%, rgba(247, 242, 232, 0) 78%),
+    var(--paper);
+}
+
+.home-hero { display: grid; justify-items: center; text-align: center; }
+
+.home-emblem {
+  width: min(330px, 84vw);
+  height: auto;
+  margin-bottom: 4px;
+  overflow: visible;
+}
+
+.emblem-col { animation: col-rise 1100ms var(--ease) both; }
+@keyframes col-rise { from { transform: translateY(16px); opacity: 0; } 30% { opacity: 1; } }
+.emblem-smoke { animation: smoke 6s ease-in-out infinite alternate; }
+@keyframes smoke { to { transform: translate(1.5px, -2.5px); opacity: 0.6; } }
+
+.home-title {
+  margin: 0;
+  font-size: clamp(46px, 13vw, 76px);
+  font-weight: 420;
+  line-height: 0.98;
+  letter-spacing: -0.025em;
+  font-variation-settings: 'opsz' 144;
+}
+
+.home-tag {
+  margin: 12px 0 0;
+  font-style: italic;
+  font-size: 17px;
+  font-weight: 360;
+  color: var(--muted);
+  letter-spacing: 0.005em;
+  text-wrap: balance;
+  max-width: 22em;
+}
+
+.home-side { width: 100%; max-width: 400px; display: grid; gap: 28px; }
+
+.home-card { display: grid; gap: 16px; }
+.home-actions { display: grid; gap: 10px; }
+.home-actions .btn { --h: 54px; font-size: 16px; border-radius: 14px; }
+
+.home-empty { text-align: center; font-size: 14px; margin: 0; }
+
+.game-list { display: grid; gap: 8px; margin-bottom: 18px; }
+.game-list h2 { margin: 0 0 2px; }
+.game-list ul { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--rule); }
+
+.game-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 14px;
+  min-height: 62px;
+  padding: 10px 2px;
+  border-bottom: 1px solid var(--rule);
+  text-decoration: none;
+  transition: background var(--t) var(--ease);
+}
+@media (hover: hover) { .game-row:hover { background: rgba(42, 38, 34, 0.025); } }
+.game-row-seats { display: grid; grid-template-columns: repeat(2, 14px); gap: 2px 3px; }
+.game-row-seats .swatch.is-open { background: color-mix(in srgb, var(--c) 22%, var(--paper)); }
+.game-row-text { display: grid; min-width: 0; }
+.game-row-name { font-size: 17px; font-weight: 470; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.game-row-meta { font-size: 12.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.game-row-go { display: inline-flex; align-items: center; gap: 4px; font-size: 13.5px; font-weight: 560; color: var(--ink-2); }
+
+.home-foot {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  font-size: 14px;
+  color: var(--muted);
+}
+.home-foot a,
+.link-btn {
+  color: var(--ink-2);
+  text-decoration: none;
+  border: 0;
+  background: none;
+  padding: 10px 2px;
+  font-size: 14px;
+  border-bottom: 1px solid transparent;
+}
+@media (hover: hover) { .home-foot a:hover, .link-btn:hover { color: var(--ink); } }
+
+/* New game form. */
+.form { display: grid; gap: 18px; }
+.form-note { margin: 0; font-size: 13.5px; }
+
+/* Help sheet. */
+.help-list { list-style: none; padding: 0; margin: 0 0 24px; display: grid; gap: 14px; }
+.help-list li { display: grid; grid-template-columns: 26px 1fr; gap: 10px; font-size: 15.5px; line-height: 1.45; }
+.help-n { font-size: 21px; line-height: 1.05; color: var(--accent); font-weight: 450; }
+.help-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+@media (min-width: 960px) {
+  .home {
+    grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr);
+    grid-template-rows: 1fr auto;
+    align-items: center;
+    column-gap: 80px;
+    max-width: 1160px;
+    margin: 0 auto;
+    padding: 48px 56px 28px;
+    background: none;
+  }
+  body:has(.home) {
+    background:
+      radial-gradient(60% 70% at 28% 30%, rgba(143, 184, 216, 0.16) 0%, rgba(243, 227, 204, 0.3) 50%, rgba(247, 242, 232, 0) 80%),
+      var(--paper);
+  }
+  .home-hero { grid-column: 1; width: 100%; }
+  .home-emblem { width: min(520px, 100%); margin-bottom: 18px; }
+  .home-side { grid-column: 2; justify-self: end; gap: 36px; }
+  .home-games { max-height: 38vh; overflow: auto; }
+  .home-foot { grid-column: 1 / -1; justify-self: center; }
+}
