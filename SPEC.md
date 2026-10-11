@@ -58,7 +58,7 @@ Det blir en enkel triangel: spjut slår ryttare, ryttare hinner ikapp och slår 
 - Högre mark: +15 % per höjdnivå över motståndaren (max +45 %). Skyttar från hög mark (2+ nivåer) når en hexagon längre.
 - Skog: +25 % i försvar.
 - Hållning *Försvar*: +50 % i försvar.
-- I en stad: +50 % i försvar, mur ger ytterligare +50 %.
+- I en stad: +50 % i försvar, en mur åt det håll anfallet kommer ifrån ger ytterligare +50 %.
 - Mötesslag: båda använder sin anfallsstyrka, ingen får försvarsbonus.
 
 **En enhet per hexagon.** Det gör positionering viktigt och gör kollisioner tydliga.
@@ -66,10 +66,37 @@ Det blir en enkel triangel: spjut slår ryttare, ryttare hinner ikapp och slår 
 ## 5. Städer och ekonomi
 
 - En nybyggare grundar en stad i slutet av turen. Städer måste ligga minst tre hexagoner från varandra. Om två nybyggare försöker grunda för nära varandra i samma tur misslyckas båda.
-- Varje stad brukar lika många rutor som den har invånare, inom två steg. Rutorna ger mat och produktion beroende på terräng.
-- Mat får staden att växa. Produktion bygger enheter eller en mur. Produktion som inte används sparas till nästa sak i kön.
+- Staden får mat och produktion från sina byggnader (se 5b), inte genom att man lägger invånare på rutor.
+- Mat får staden att växa. Produktion bygger enheter eller byggnader. Produktion som inte används sparas till nästa sak i kön.
 - Städer har 20 i hälsa, skjuter själva (räckvidd 2) och läker varje tur. En stad utan garnison och med hälsa 0 erövras av första närstridsenhet som går in.
-- **Seger:** ta alla motståndares städer. Annars vinner högst poäng efter 60 turer (städer, invånare, enheter).
+- **Seger:** ta alla motståndares städer. Annars vinner högst poäng efter 60 turer (städer, invånare, byggnader, enheter).
+
+## 5b. Staden inifrån
+
+Att gå in i en stad är en egen vy. Kameran dyker ner och staden visas som en liten handbyggd diorama, mycket mer detaljerad än kartan: gator, torg, hus, marknadsstånd, rök från skorstenarna och folk som rör sig. Här fattas de långa besluten.
+
+**Kvarteren.** Staden är ett eget litet bräde med 19 tomter: torget i mitten, sex inre tomter och tolv yttre. Varje yttre tomt vetter mot en riktig grannruta på kartan, så stadens insida speglar landskapet runt den. En tomt mot skogen passar för en såg, en mot havet för en hamn, en mot ängarna för en gård.
+
+**Byggnader.** Man bygger en sak i taget på en tomt, med stadens produktion. Grannar spelar roll:
+
+| Byggnad | Tomt | Ger |
+|---|---|---|
+| Hus | var som helst | Bostäder: plats för 2 invånare till |
+| Gård | yttre, mot gräs eller slätt | Mat, mer ju bördigare rutorna den vetter mot är |
+| Såg | yttre, mot skog eller kulle | Produktion |
+| Verkstad | inre | Produktion, +1 för varje verkstad eller såg bredvid |
+| Marknad | inre | Mat och produktion, +1 för varje hus bredvid |
+| Hamn | yttre, mot vatten | Mat från havet |
+| Kasern | inre | Alla enheter kostar 25 % mindre |
+| Tempel | intill torget | Poäng, och staden växer snabbare |
+| Torn | yttre | Staden skjuter en ruta längre åt det hållet, och hårdare |
+| Mur | yttre | +50 % i försvar mot anfall från det hållet |
+
+**Invånare arbetar i byggnaderna.** Gårdar, sågar, verkstäder, marknader, hamnar och tempel behöver en invånare var för att ge något. Hus sätter taket för hur många som kan bo i staden. Räcker folket inte till väljer stadens inriktning (Tillväxt, Produktion eller Balans) vilka byggnader som bemannas.
+
+**Murar och torn har riktning.** Man skyddar den sida man tror att fienden kommer ifrån. Gissar man fel står muren på fel ställe.
+
+Senare: stadens stämning, högtider och händelser, kvarter som växer ihop till distrikt, och särskilda byggnader som bara en stad i taget kan ha.
 
 ## 6. Lokala befälhavare (hållningar)
 
@@ -108,7 +135,9 @@ Motorn är en ren funktion: `verkställ(tillstånd, allas order) → nytt tillst
 - Online-multiplayer för 2 till 4 spelare, via en länk. Tomma platser fylls med botar.
 - Spela mot bot direkt, utan att vänta på någon.
 - Hela turcykeln: planera i hemlighet, tryck *Klar*, se verkställningen spelas upp tick för tick.
-- Hexkarta med höjder i 3D, fyra enhetstyper, städer, tillväxt, murar, erövring och seger.
+- Hexkarta med höjder i 3D, fyra enhetstyper, städer, tillväxt, erövring och seger.
+- Stadsvyn med kvarter, byggnader och murar med riktning (5b).
+- Ljud: effekter, miljöljud och musik.
 - Fungerar på mobilen.
 - En enkel bot och ett headless simuleringsskript.
 

@@ -11,3 +11,5 @@ test-results/
 # (owner <-> agent notes). This repo is public.
 .private/
 CLAUDE.md
+.env
+.env.*
