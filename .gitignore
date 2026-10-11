@@ -1,0 +1,13 @@
+node_modules/
+dist/
+dist-server/
+data/
+.DS_Store
+*.tsbuildinfo
+test-results/
+.claude/
+
+# Private: anything about the friends group or its members, and internal dev docs
+# (owner <-> agent notes). This repo is public.
+.private/
+CLAUDE.md
