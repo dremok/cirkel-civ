@@ -1,6 +1,6 @@
 # PROJECT_STATUS
 
-*Last updated: 2026-10-12 02:20*
+*Last updated: 2026-10-12 03:00*
 
 ## Where this is
 
@@ -17,8 +17,14 @@
   towers, bot building, save migration), the city view (CityScreen), world and pieces polish
   rounds (colour variety, close-up detail).
 
+## Live
+
+First demo deployed 2026-10-12 (commit 8e9a3e1): https://cirkel-civ-production.up.railway.app.
+Verified end to end on production, desktop and phone: bot game, turns and replays, city view, no
+console errors. 82 tests pass.
+
 ## Next
 
-1. Engine city interior lands; UI city wiring and CityScreen committed with it.
-2. Wire audio into the play screen and replay.
-3. End-to-end play test (desktop + phone), deploy, share the demo.
+1. Feedback from players.
+2. Open design question: victory conditions (SPEC.md §10.5).
+3. Polish in flight: desktop opening framing, world close-up detail, phone home-framing bug.
