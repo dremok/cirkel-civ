@@ -22,6 +22,7 @@ export const PAINT = {
   steel: '#A9B0B9',
   steelDark: '#737A84',
   steelLight: '#C9CFD6',
+  mail: '#8C9199',
   gold: '#D9AE4E',
   leather: '#6F4A33',
   leatherDark: '#4E3424',
@@ -101,6 +102,8 @@ interface FigureOpts {
   tunic?: Paint
   /** Paint for the hem band (default: team dark). */
   hem?: Paint
+  /** Paint for the skirt below the belt (default: the tunic). */
+  skirt?: Paint
 }
 
 /** A miniature figure: boots, trousers, a tunic with a dark hem and ivory trim, belt, a face. */
@@ -120,8 +123,10 @@ function figure(k: Kit, o: FigureOpts = {}): Peg {
   const belt = 0.215
   const skirt: [number, number][] = [[0, 0.118], [0.106, 0.118], [0.116, 0.128], [0.11, 0.165], [0.1, 0.2], [0.097, belt]]
   const chest: [number, number][] = [[0.097, belt], [0.094, 0.235], [0.1, 0.28], [0.108, 0.315], [0.104, 0.345], [0.084, 0.372], [0.048, 0.388], [0, 0.392]]
-  tunic(lathe(skirt.map(([r, h]) => [r * s, y + h * s]), 18), {})
+  ;(o.skirt ?? tunic)(lathe(skirt.map(([r, h]) => [r * s, y + h * s]), 18), {})
   tunic(lathe(chest.map(([r, h]) => [r * s, y + h * s]), 18), {})
+  // a linen collar
+  k.add(torus(0.05 * s, 0.012 * s, 4, 16), PAINT.linen, { p: [0, y + 0.383 * s, 0], r: [Math.PI / 2, 0, 0] })
   hem(torus(0.113 * s, 0.011 * s, 4, 22), { p: [0, y + 0.13 * s, 0], r: [Math.PI / 2, 0, 0] })
   k.add(torus(0.111 * s, 0.004 * s, 3, 22), PAINT.ivory, { p: [0, y + 0.146 * s, 0], r: [Math.PI / 2, 0, 0] })
   // belt with a buckle
@@ -194,7 +199,7 @@ function fringe(k: Kit, x0: number, x1: number, y: number, z: number, flutter: (
 
 function spear(k: Kit) {
   addBase(k)
-  const peg = figure(k)
+  const peg = figure(k, { skirt: (g, o) => k.add(g, PAINT.mail, o) })
   // a tabard stripe in the light tone and steel pauldrons
   k.teamLight(box(0.05, 0.15, 0.012), 1, { p: [0, 0.335, 0.098], r: [-0.08, 0, 0] })
   k.add(box(0.05, 0.012, 0.014), PAINT.gold, { p: [0, 0.405, 0.094] })
@@ -231,7 +236,7 @@ function spear(k: Kit) {
 
 function archer(k: Kit) {
   addBase(k)
-  const peg = figure(k, { trousers: PAINT.moss })
+  const peg = figure(k, { trousers: PAINT.moss, skirt: (g, o) => k.teamDark(g, 1.1, o), hem: (g, o) => k.add(g, PAINT.leatherDark, o) })
   // leather jerkin over the tunic, a strap across the chest
   k.add(lathe([[0.104, 0.24], [0.108, 0.3], [0.104, 0.345], [0.086, 0.37], [0.05, 0.384]].map(([r, h]) => [r + 0.003, Y0 + h]), 18), PAINT.leather)
   k.add(box(0.02, 0.3, 0.012), PAINT.leatherDark, { p: [0.0, 0.3, 0.1], r: [0, 0, 0.62] })
@@ -342,6 +347,8 @@ function rider(k: Kit) {
     limb(k, [sx * 0.1 * H, hb + 0.03, 0.055], [sx * 0.105 * H, hb - 0.055, 0.03], 0.023, (g, o) => k.add(g, PAINT.trousers, o))
     k.add(capsule(0.022, 0.03, 3, 8), PAINT.boot, { p: [sx * 0.106 * H, hb - 0.075, 0.045], r: [Math.PI / 2, 0, 0] })
   }
+  k.add(lathe([[0.105, 0.232], [0.113, 0.29], [0.112, 0.33], [0.1, 0.356], [0.07, 0.374], [0.05, 0.378]].map(([r, h]) => [r * 0.8 + 0.005, hb + 0.04 + h * 0.8]), 18), PAINT.steel)
+  k.add(torus(0.085, 0.006, 4, 16), PAINT.gold, { p: [0, hb + 0.04 + 0.24 * 0.8, 0], r: [Math.PI / 2, 0, 0] })
   cape(k, peg, 0.24, 0.16)
   helmet(k, peg.hy, 0.8)
   arm(k, peg, -1, [-0.03, hb + 0.2, 0.12])

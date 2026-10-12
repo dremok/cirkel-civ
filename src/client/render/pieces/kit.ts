@@ -315,10 +315,10 @@ export function pieceMaterial(o: PieceMatOpts = {}): THREE.MeshStandardMaterial 
       .replace('#include <color_fragment>', `#include <color_fragment>
         if (vMottle > 0.001) {
           // drifts of sage and chartreuse (on lawns), moss and sun-bleach (on roofs)
-          float n1 = pNoise(vMottleXZ * 4.5) * 0.6 + pNoise(vMottleXZ * 10.0 + 7.3) * 0.4;
-          float n2 = pNoise(vMottleXZ * 26.0 + 3.1);
-          vec3 tint = mix(vec3(0.82, 0.95, 0.88), vec3(1.13, 1.07, 0.80), smoothstep(0.28, 0.72, n1));
-          diffuseColor.rgb *= mix(vec3(1.0), tint * (0.93 + 0.14 * n2), vMottle);
+          float n1 = pNoise(vMottleXZ * 3.6) * 0.55 + pNoise(vMottleXZ * 9.0 + 7.3) * 0.45;
+          float n2 = pNoise(vMottleXZ * 24.0 + 3.1);
+          vec3 tint = mix(vec3(0.68, 0.9, 0.86), vec3(1.24, 1.12, 0.66), smoothstep(0.3, 0.7, n1));
+          diffuseColor.rgb *= mix(vec3(1.0), tint * (0.86 + 0.26 * n2), vMottle);
         }`)
       .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
         totalEmissiveRadiance += vGlow * diffuseColor.rgb * uGlowColor * uGlowStrength;`)
