@@ -3,11 +3,11 @@
 // waits for the attack before it). About 0.5 s per tick at speed 1.
 import * as THREE from 'three'
 import { UNIT_MAX_HP } from '../../../engine/config.ts'
-import type { GameEvent, GameState, Target, Tick, TileId, UnitId } from '../../../engine/types.ts'
+import type { City, GameEvent, GameState, Target, Tick, TileId, UnitId } from '../../../engine/types.ts'
 import {
   type Board, angleDelta, clamp01, colorIndexOf, easeInCubic, easeInOutCubic, easeOutBack, easeOutCubic, lerp, smoothstep, teamColors,
 } from './common.ts'
-import type { CityLayer } from './cities.ts'
+import { type CityLayer, interiorOf } from './cities.ts'
 import type { Fx } from './fx.ts'
 import type { Labels } from './labels.ts'
 import { BASE_R } from './models.ts'
@@ -111,6 +111,10 @@ export function buildReplay(d: ReplayDeps, prev: GameState, events: GameEvent[],
   for (const c of prev.cities) cityTile.set(c.id, c.tile)
   for (const e of events) if (e.kind === 'found') cityTile.set(e.city.id, e.city.tile)
   const colorOf = (owner: number) => colorIndexOf(next, owner)
+  // the cities as they are shown while the replay runs (grow and build events patch these)
+  const shownCity = new Map<number, City>()
+  for (const c of prev.cities) shownCity.set(c.id, structuredClone(c))
+  const nextCity = (id: number) => next.cities.find((c) => c.id === id)
 
   const at = (id: UnitId) => free.get(id) ?? 0
   const busy = (id: UnitId, t: number) => free.set(id, Math.max(at(id), t))
@@ -532,6 +536,7 @@ export function buildReplay(d: ReplayDeps, prev: GameState, events: GameEvent[],
         case 'found': {
           const start = Math.max(S, at(e.unit))
           const city = e.city
+          shownCity.set(city.id, structuredClone(city))
           const ci = colorOf(city.owner)
           tl.add({
             start, dur: 0.32 * k,
@@ -553,7 +558,7 @@ export function buildReplay(d: ReplayDeps, prev: GameState, events: GameEvent[],
           tl.add({
             start: start + 0.2 * k, dur: 0,
             begin() {
-              cities.found(city, ci)
+              cities.found(prev.map, city, ci)
               const c = teamColors(ci)
               fx.ring(board.tops[city.tile], c.base, 0.4, 2.0, 1.1, 0.9)
               d.territory(true)
@@ -569,7 +574,7 @@ export function buildReplay(d: ReplayDeps, prev: GameState, events: GameEvent[],
             start, dur: 0, fx: true,
             begin() {
               const v = units.get(e.unit)
-              if (v) labels.float('×', 'dmg', headOf(v), { life: 1.2 })
+              if (v) labels.float('Cannot settle here', 'note', headOf(v), { life: 1.6 })
             },
           })
           break
@@ -601,19 +606,34 @@ export function buildReplay(d: ReplayDeps, prev: GameState, events: GameEvent[],
           break
         }
         case 'built': {
-          if (e.item !== 'walls') break
-          tl.add({ start: S, dur: 0, begin: () => cities.setWalls(e.city, true, true) })
+          // units are shown by their spawn; a new building in the interior shows up on the map
+          const c = shownCity.get(e.city)
+          if (!c || typeof e.item !== 'object') break
+          const order = e.item
+          const n = nextCity(e.city)
+          const base = interiorOf(c) ?? (n ? interiorOf(n) : null)
+          if (!base) break
+          const interior = structuredClone(base)
+          interior.plots[order.plot] = order.building
+          c.interior = interior
+          if (order.building === 'wall') c.walls = true
+          const snap = structuredClone(c)
+          tl.add({ start: S, dur: 0, begin: () => cities.replan(prev.map, snap, true) })
           blockEnd = Math.max(blockEnd, S + 0.8 * k)
           break
         }
         case 'grow': {
+          const c = shownCity.get(e.city)
+          if (!c) break
+          c.pop = e.pop
+          const snap = structuredClone(c)
           tl.add({
             start: S + 0.1 * k, dur: 0,
             begin() {
-              cities.setPop(e.city, e.pop, true)
+              cities.setPop(prev.map, snap, true)
             },
           })
-          blockEnd = Math.max(blockEnd, S + 0.7 * k)
+          blockEnd = Math.max(blockEnd, S + 0.9 * k)
           break
         }
         case 'heal': {

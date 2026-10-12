@@ -4,7 +4,7 @@ import { UNIT_MAX_HP } from '../../../engine/config.ts'
 import type { GameState, PlayerId, Stance, TileId, Unit, UnitId, UnitType } from '../../../engine/types.ts'
 import { type Board, colorIndexOf, hash01, teamColors } from './common.ts'
 import { Batch, GLYPH_CELL, arcGeometry, arcMaterial, billboardQuad, flatQuad, silhouetteMaterial, spriteMaterial, textures } from './gfx.ts'
-import { withFlutter } from './kit.ts'
+import { pieceMaterial } from './kit.ts'
 import { BASE_R, unitModel } from './models.ts'
 
 const TYPES: UnitType[] = ['spear', 'archer', 'rider', 'settler']
@@ -58,21 +58,21 @@ export class UnitLayer {
   private v = new THREE.Vector3()
   private v2 = new THREE.Vector3()
   private base = new THREE.Matrix4()
+  private faced = false
   private axis = new THREE.Vector3()
 
   constructor(private board: Board, root: THREE.Object3D, private standY: (tile: TileId) => number, private faceYaw: () => number = () => 0) {
-    const neutral = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.62, metalness: 0.0 })
-    const team = withFlutter(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.55, metalness: 0.0 }))
+    const body = pieceMaterial({ roughness: 0.58, idle: true })
+    body.side = THREE.DoubleSide
     const sil = silhouetteMaterial()
     for (const type of TYPES) {
       const g = unitModel(type)
       const b = new Batch(root, [
-        { geo: g.neutral, mat: neutral, shadow: true, receive: true },
-        { geo: g.team, mat: team, shadow: true, receive: true },
-        { geo: g.sil!, mat: sil, order: 7 },
-      ], CAP, { aSil: 1 })
+        { geo: g.geo, mat: body, shadow: true, receive: true },
+        { geo: g.sil, mat: sil, order: 7 },
+      ], CAP, { aSil: 1, aPhase: 1 })
       // the silhouette takes the team colour
-      b.meshes[2].instanceColor = b.meshes[1].instanceColor
+      b.meshes[1].instanceColor = b.meshes[0].instanceColor
       this.batches.set(type, b)
     }
     const tex = textures()
@@ -132,7 +132,7 @@ export class UnitLayer {
       slot: batch.alloc(), deco: this.shadows.alloc(),
       hp: u.hp, hpShown: u.hp, stance: u.stance, tile: u.tile,
       pos: new THREE.Vector3(), ground: 0,
-      yaw: this.faceYaw() + (hash01(u.id, 7) - 0.5) * 0.9,
+      yaw: this.faceYaw() + (hash01(u.id, 7) - 0.5) * 0.5,
       tilt: 0, tdx: 1, tdz: 0, scale: 1, deco01: 1,
       glyphOverride: null, glyphPulse: 0, lift: 0, dirty: true,
     }
@@ -176,12 +176,18 @@ export class UnitLayer {
   private paint(vis: UnitVis) {
     const tc = teamColors(vis.colorIdx)
     const b = this.batches.get(vis.type)!
-    b.setColor(vis.slot, tc.base, 1)
+    b.setColor(vis.slot, tc.base, 0)
+    b.setExtra('aPhase', vis.slot, hash01(vis.id, 13) * 40)
     this.glyphs.setColor(vis.deco, tc.base)
     vis.dirty = true
   }
 
   update(dt: number, camera: THREE.Camera): void {
+    if (!this.faced) {
+      // units made before the camera settled turn to face it on the first frame
+      this.faced = true
+      for (const vis of this.units.values()) { vis.yaw = this.faceYaw() + (hash01(vis.id, 7) - 0.5) * 0.5; vis.dirty = true }
+    }
     camera.getWorldDirection(this.camDir)
     const az = Math.atan2(this.camDir.x, this.camDir.z)
     const camMoved = Math.abs(az - this.lastCamAz) > 1e-4 || Number.isNaN(this.lastCamAz)

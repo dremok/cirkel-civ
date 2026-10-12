@@ -5,7 +5,7 @@ import type { TileId } from '../../../engine/types.ts'
 import type { PlanStep, Selection, UnitPlan } from '../api.ts'
 import { buildBand } from './bands.ts'
 import { ATTACK_RED, type Board, IVORY, teamColors } from './common.ts'
-import { Batch, bandMaterial, flatQuad, ribbonMaterial, spriteMaterial, swordsTexture, textures } from './gfx.ts'
+import { Batch, bandMaterial, flatQuad, reticleTexture, ribbonMaterial, spriteMaterial, swordsTexture, textures } from './gfx.ts'
 import type { Label, Labels } from './labels.ts'
 import { flagPole } from './models.ts'
 import type { UnitLayer } from './units.ts'
@@ -153,7 +153,7 @@ export class Overlays {
 
   private rebuildPlans() {
     if (this.plans) this.drop(this.plans)
-    this.plans = this.build(this.lastPlans.map((p) => ({ unit: p.unit, steps: p.steps, kind: p.kind })), false)
+    this.plans = this.build(this.lastPlans.map((p) => ({ unit: p.unit, steps: p.steps, kind: p.kind, target: p.target ?? null })), false)
   }
 
   setSelection(sel: Selection) {
@@ -218,7 +218,7 @@ export class Overlays {
     }
   }
 
-  private build(plans: { unit: number; steps: PlanStep[]; kind: UnitPlan['kind'] }[], ghost: boolean): Built {
+  private build(plans: { unit: number; steps: PlanStep[]; kind: UnitPlan['kind']; target?: TileId | null }[], ghost: boolean): Built {
     const group = new THREE.Group()
     const decals = new Batch(group, [{
       geo: flatQuad(), mat: spriteMaterial({ map: textures().decals, tritone: true, atlas: true, depthBias: 0.03 }), order: 11,
@@ -236,8 +236,11 @@ export class Overlays {
     }
     for (const plan of plans) {
       const vis = this.units.get(plan.unit)
-      if (!vis || !plan.steps.length) continue
+      if (!vis) continue
       const tc = teamColors(vis.colorIdx)
+      const endTile = plan.steps.length ? plan.steps[plan.steps.length - 1].tile : vis.tile
+      if (plan.target !== undefined && plan.target !== null && plan.target !== endTile) this.volleyTarget(built, endTile, plan.target, ghost)
+      if (!plan.steps.length) continue
       const tiles = [vis.tile, ...plan.steps.map((s) => s.tile)]
       const later = (turn: number) => (turn > 0 ? 0.32 : 1)
       const fades = plan.steps.map((s) => later(s.turn) * (ghost ? 0.85 : 1))
@@ -289,6 +292,62 @@ export class Overlays {
     this.root.add(group)
     for (const l of built.labels) l.hidden = !this.visible
     return built
+  }
+
+  /** An archer's volley target: a warm red reticle and a dashed arc from where the archer will stand. */
+  private volleyTarget(b: Built, from: TileId, to: TileId, ghost: boolean) {
+    const a = this.board.tops[from]
+    const t = this.board.tops[to]
+    const p0 = new THREE.Vector3(a.x, a.y + 0.5, a.z)
+    const p1 = new THREE.Vector3(t.x, t.y + 0.12, t.z)
+    const dist = Math.hypot(p1.x - p0.x, p1.z - p0.z)
+    const apex = 0.45 + dist * 0.16
+    // start a little way out from the archer so the arc never runs through the figure
+    const N = 48
+    const t0 = 0.12
+    const pos: number[] = []
+    const uv: number[] = []
+    const fade: number[] = []
+    const idx: number[] = []
+    const dir = new THREE.Vector3(p1.x - p0.x, 0, p1.z - p0.z).normalize()
+    const side = new THREE.Vector3(-dir.z, 0, dir.x).multiplyScalar(0.035)
+    let len = 0
+    let prev: THREE.Vector3 | null = null
+    for (let i = 0; i <= N; i++) {
+      const u = t0 + (1 - t0) * (i / N)
+      const p = new THREE.Vector3().lerpVectors(p0, p1, u)
+      p.y += apex * 4 * u * (1 - u)
+      if (prev) len += p.distanceTo(prev)
+      prev = p
+      pos.push(p.x + side.x, p.y, p.z + side.z, p.x - side.x, p.y, p.z - side.z)
+      uv.push(len, 0, len, 1)
+      const f = Math.min(1, (i / N) / 0.15) * Math.min(1, (1 - i / N) / 0.08)
+      fade.push(f, f)
+      if (i < N) idx.push(i * 2, i * 2 + 2, i * 2 + 1, i * 2 + 1, i * 2 + 2, i * 2 + 3)
+    }
+    const g = new THREE.BufferGeometry()
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3))
+    g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2))
+    g.setAttribute('aFade', new THREE.Float32BufferAttribute(fade, 1))
+    g.setIndex(idx)
+    const mat = ribbonMaterial({ color: ATTACK_RED, opacity: ghost ? 0.8 : 0.95, width: 0.07, dash: 0.13 })
+    mat.side = THREE.DoubleSide
+    mat.polygonOffset = false
+    const arc = new THREE.Mesh(g, mat)
+    arc.renderOrder = 12
+    b.group.add(arc)
+    b.mats.push(mat)
+    // reticle
+    const rmat = new THREE.MeshBasicMaterial({ map: reticleTexture(), transparent: true, depthWrite: false, toneMapped: false, opacity: ghost ? 0.85 : 1 })
+    rmat.polygonOffset = true
+    rmat.polygonOffsetFactor = -4
+    rmat.polygonOffsetUnits = -4
+    const ret = new THREE.Mesh(flatQuad(), rmat)
+    ret.position.set(t.x, t.y + LIFT + 0.01, t.z)
+    ret.scale.set(1.05, 1, 1.05)
+    ret.renderOrder = 11
+    ret.userData.spin = true
+    b.group.add(ret)
   }
 
   private tickLabel(b: Built, tile: TileId, tick: number, color: string, ghost: boolean, end: boolean) {
@@ -350,6 +409,7 @@ export class Overlays {
         f.cloth.geometry.computeVertexNormals()
       }
       for (const s of b.swords) s.position.y = s.userData.y + Math.sin(time * 2.2) * 0.03
+      for (const o of b.group.children) if (o.userData.spin) o.rotation.y = time * 0.35
     }
     // selection ring follows the unit
     const vis = this.selUnit !== null ? this.units.get(this.selUnit) : undefined

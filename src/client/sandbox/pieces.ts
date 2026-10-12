@@ -8,12 +8,13 @@ import {
   type City, type GameEvent, type GameState, type PlayerOrders, type Target, type TileId, type Unit, type UnitType,
   botOrders, canStep, createGame, distance, findPath, isPassable, neighbors, newCity, newUnit, pathTiming, reachableThisTurn, resolveTurn,
 } from '../../engine/index.ts'
+import { type BuildingType, type CityInterior, PLOTS, canPlace, newInterior } from '../../engine/city.ts'
 import type { PlanStep, UnitPlan } from '../render/api.ts'
 import { createGameView } from '../render/index.ts'
 
 const q = new URLSearchParams(location.search)
 const seats = Number(q.get('seats') ?? 2)
-const NAMES = ['Anna', 'Lars', 'Ida', 'Olle']
+const NAMES = ['Anna', 'Lars', 'Sara', 'Olle']
 let state: GameState = createGame({
   seed: q.get('seed') ?? 'aurora',
   players: NAMES.slice(0, seats).map((name, i) => ({ name, kind: i === 0 ? 'human' : 'bot' })),
@@ -89,16 +90,75 @@ capA.pop = 4
 capA.walls = true
 capB.pop = 3
 const extra = add(0, 'archer', freeNear(capA.tile, reserved, (x) => distance(map, x, capA.tile) === 1), { hp: 7, stance: 'hold' })
-void extra
 const mySettler = state.units.find((u) => u.owner === 0 && u.type === 'settler')!
 const foundTile = freeNear(capA.tile, reserved, (x) => distance(map, x, capA.tile) >= 3 && state.cities.every((c) => distance(map, c.tile, x) >= 3)
   && neighbors(map, x).some((n) => land(n) && !occupied().has(n) && distance(map, n, capA.tile) < distance(map, x, capA.tile)))
 mySettler.tile = freeNear(foundTile, reserved, (x) => neighbors(map, foundTile).includes(x) && distance(map, x, capA.tile) < distance(map, foundTile, capA.tile))
 const foundOk = state.cities.every((c) => distance(map, c.tile, foundTile) >= 3) && neighbors(map, mySettler.tile).includes(foundTile)
+/** A plausible interior for a town of `pop` (sandbox only; the engine and players build the real ones). */
+function sampleInterior(c: City, o: { walls?: boolean } = {}): CityInterior {
+  const interior = newInterior()
+  const put = (b: BuildingType, plots: number[], n: number) => {
+    for (const i of plots) {
+      if (n <= 0) break
+      if (interior.plots[i] === null && canPlace(map, c.tile, interior, b, i).ok) { interior.plots[i] = b; n-- }
+    }
+  }
+  const inner = [2, 1, 3, 6, 4, 5]
+  const outer = Array.from({ length: 12 }, (_, k) => k + 7)
+  const P = c.pop
+  if (o.walls) {
+    // walls on the land-facing corner plots, towers on two side plots
+    put('wall', outer.filter((i) => PLOTS[i].facing.length === 1), 6)
+    put('tower', outer.filter((i) => PLOTS[i].facing.length === 2), 2)
+  }
+  put('harbor', outer, 1)
+  if (P >= 3) put('market', [5, 4], 1)
+  if (P >= 5) put('temple', inner, 1)
+  if (P >= 6) put('workshop', inner, 1)
+  if (o.walls) put('barracks', inner, 1)
+  put('farm', [...outer].reverse(), 1 + Math.floor(P / 3))
+  if (P >= 3) put('sawmill', outer, 1)
+  put('house', [...inner, ...outer], Math.ceil(P * 0.8))
+  return interior
+}
+
+// showcase towns: a coastal one, a walled one and a small one (&towns=0 to leave them out)
+const farFromCities = (x: TileId) => state.cities.every((c) => distance(map, c.tile, x) >= 3)
+const coastal = (x: TileId) => neighbors(map, x).some((n) => map.tiles[n].biome === 'shallow' || map.tiles[n].biome === 'deep')
+const showcase: Record<string, TileId> = {}
+if (q.get('towns') !== '0') {
+  const pickTile = (pred: (x: TileId) => boolean) => map.tiles.map((t) => t.id).find((x) => land(x) && !occupied().has(x) && farFromCities(x) && !reserved.has(x) && pred(x))
+  const coastTile = pickTile((x) => coastal(x) && map.tiles[x].height <= 3)
+  if (coastTile !== undefined) { const c = newCity(state, 0, coastTile); c.pop = 4; c.interior = sampleInterior(c); state.cities.push(c); showcase.coast = coastTile }
+  const walledTile = pickTile((x) => !coastal(x) && neighbors(map, x).filter(land).length >= 5)
+  if (walledTile !== undefined) { const c = newCity(state, 1, walledTile); c.pop = 7; c.interior = sampleInterior(c, { walls: true }); c.walls = true; state.cities.push(c); showcase.walled = walledTile }
+  const smallTile = pickTile(() => true)
+  if (smallTile !== undefined) { const c = newCity(state, 0, smallTile); c.pop = 1; c.interior = sampleInterior(c); state.cities.push(c); showcase.small = smallTile }
+}
+capA.pop = Number(q.get('capPop') ?? 6)
+capB.interior = sampleInterior(capB)
+// the first capital and the raided town show the plan derived from population (no interior)
+for (const c of [capA, town]) delete (c as Partial<City>).interior
+
 // extra seats get a few pieces too
 for (const c of state.cities.filter((c) => c.owner >= 2)) {
   add(c.owner, 'rider', freeNear(c.tile, new Set()))
   c.pop = 2
+}
+
+// &lineup=1: one of each unit type in a row, for close-ups (focus=lineup)
+const lineupAt: TileId[] = []
+if (q.has('lineup')) {
+  for (const t of map.tiles) {
+    const row = [0, 1, 2, 3].map((k) => t.id + k)
+    if (t.col > map.width - 5) continue
+    if (row.every((x) => land(x) && !occupied().has(x) && !cityTiles().has(x) && Math.abs(map.tiles[x].height - t.height) <= 0)) {
+      ;(['spear', 'archer', 'rider', 'settler'] as UnitType[]).forEach((type, k) => add(Number(q.get('owner') ?? 0), type, row[k], { hp: k === 1 ? 6 : 10, stance: (['hold', 'cautious', 'aggressive', 'cautious'] as const)[k] }))
+      lineupAt.push(...row)
+      break
+    }
+  }
 }
 
 // &crowd=<n>: fill the board up to n units (performance)
@@ -149,8 +209,11 @@ if (foundOk) {
 }
 ev.push({ t: 8, kind: 'built', city: capB.id, item: 'rider' })
 ev.push({ t: 8, kind: 'spawn', unit: { ...newUnit(state, 1, 'rider', spawnTile) }, city: capB.id })
-ev.push({ t: 8, kind: 'built', city: capB.id, item: 'walls' })
-ev.push({ t: 8, kind: 'grow', city: capA.id, pop: 5 })
+{
+  const wallPlot = PLOTS.findIndex((pl, i) => i > 0 && pl.ring === 2 && capB.interior?.plots[i] === null && canPlace(map, capB.tile, capB.interior, 'wall', i).ok)
+  if (wallPlot > 0) ev.push({ t: 8, kind: 'built', city: capB.id, item: { building: 'wall', plot: wallPlot } })
+}
+ev.push({ t: 8, kind: 'grow', city: capA.id, pop: capA.pop + 1 })
 ev.push({ t: 8, kind: 'heal', unit: a2.id, hp: 10 })
 
 function applyScript(s0: GameState, events: GameEvent[]): GameState {
@@ -171,7 +234,11 @@ function applyScript(s0: GameState, events: GameEvent[]): GameState {
       case 'capture': { const c = city(e.city); if (c) { c.owner = e.to; c.hp = 5 } break }
       case 'found': s.cities.push(structuredClone(e.city)); s.units = s.units.filter((u) => u.id !== e.unit); break
       case 'spawn': s.units.push(structuredClone(e.unit)); break
-      case 'built': { const c = city(e.city); if (c && e.item === 'walls') c.walls = true; break }
+      case 'built': {
+        const c = city(e.city)
+        if (c && typeof e.item === 'object' && c.interior) { c.interior.plots[e.item.plot] = e.item.building; if (e.item.building === 'wall') c.walls = true }
+        break
+      }
       case 'grow': { const c = city(e.city); if (c) c.pop = e.pop; break }
       case 'heal': { const u = unit(e.unit); if (u) u.hp = e.hp; break }
     }
@@ -197,6 +264,7 @@ view.setState(state, ME)
 let selected: number | null = null
 let hover: TileId | null = null
 const orders = new Map<number, { path: TileId[]; kind: UnitPlan['kind'] }>()
+const targets = new Map<number, TileId>()
 
 function stepsFor(unitId: number, path: TileId[]): PlanStep[] {
   return pathTiming(state, unitId, path).map((t, i) => ({ tile: path[i], turn: t.turn, tick: t.tick }))
@@ -212,7 +280,12 @@ function pushPlans() {
   for (const [unit, o] of orders) {
     const u = state.units.find((x) => x.id === unit)
     if (!u) continue
-    plans.push({ unit, steps: stepsFor(unit, o.path), kind: o.kind, stance: u.stance })
+    plans.push({ unit, steps: stepsFor(unit, o.path), kind: o.kind, stance: u.stance, target: targets.get(unit) ?? null })
+  }
+  // archers that only have a volley target
+  for (const [unit, target] of targets) {
+    const u = state.units.find((x) => x.id === unit)
+    if (u && !orders.has(unit)) plans.push({ unit, steps: [], kind: 'attack', stance: u.stance, target })
   }
   view.setPlans(plans)
 }
@@ -246,6 +319,7 @@ planFor(a3, capB.tile)
 planFor(a2, b2.tile)
 planFor(mySettler, foundTile)
 planFor(myArcher, freeNear(P[m - 2] ?? P[m - 1], reserved))
+targets.set(extra.id, b4.tile)
 pushPlans()
 
 const sel = q.get('sel')
@@ -276,6 +350,8 @@ async function playScripted() {
 async function playReal() {
   if (playing) return
   playing = true
+  // the engine needs an interior on every city (the sandbox shows two without one)
+  for (const c of state.cities) if (!c.interior) c.interior = newInterior()
   const all: Record<number, PlayerOrders> = {}
   for (const p of state.players) all[p.id] = botOrders(state, p.id, state.turn)
   const res = resolveTurn(state, all)
@@ -302,7 +378,7 @@ document.getElementById('play')!.onclick = () => playScripted()
 document.getElementById('skip')!.onclick = () => view.skipPlayback()
 document.getElementById('real')!.onclick = () => playReal()
 
-const named: Record<string, TileId> = { capA: capA.tile, capB: capB.tile, town: townTile, mid: P[m], found: foundTile }
+const named: Record<string, TileId> = { capA: capA.tile, capB: capB.tile, town: townTile, mid: P[m], found: foundTile, ...showcase, ...(lineupAt.length ? { lineup: lineupAt[1], settler: lineupAt[3] } : {}) }
 const fq = q.get('focus')
 // camera, then (optionally) the replay, once the world has rendered a few frames
 const focusTile = fq === null ? P[m] : fq in named ? named[fq] : Number(fq)

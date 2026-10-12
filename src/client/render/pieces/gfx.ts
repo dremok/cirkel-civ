@@ -213,6 +213,33 @@ export function swordsTexture(color: string): THREE.CanvasTexture {
   return swordsTex
 }
 
+/** Volley target reticle (colour texture): a warm red ring with four ticks and a centre dot on ivory. */
+let reticleTex: THREE.CanvasTexture | null = null
+export function reticleTexture(): THREE.CanvasTexture {
+  if (reticleTex) return reticleTex
+  reticleTex = canvasTexture(256, 256, (g) => {
+    g.translate(128, 128)
+    const stroke = (w: number, color: string) => {
+      g.lineWidth = w
+      g.strokeStyle = color
+      g.lineCap = 'round'
+      g.beginPath(); g.arc(0, 0, 78, 0, Math.PI * 2); g.stroke()
+      g.beginPath(); g.arc(0, 0, 40, 0, Math.PI * 2); g.stroke()
+      for (let i = 0; i < 4; i++) {
+        const a = (i / 4) * Math.PI * 2 + Math.PI / 4
+        g.beginPath(); g.moveTo(Math.cos(a) * 92, Math.sin(a) * 92); g.lineTo(Math.cos(a) * 112, Math.sin(a) * 112); g.stroke()
+      }
+    }
+    stroke(22, 'rgba(250,246,238,0.95)')
+    stroke(9, '#D2432B')
+    g.fillStyle = 'rgba(250,246,238,0.95)'
+    g.beginPath(); g.arc(0, 0, 15, 0, Math.PI * 2); g.fill()
+    g.fillStyle = '#D2432B'
+    g.beginPath(); g.arc(0, 0, 9, 0, Math.PI * 2); g.fill()
+  }, true)
+  return reticleTex
+}
+
 // ---------------------------------------------------------------------------------------------
 // Shaders
 
@@ -513,7 +540,7 @@ export function ribbonMaterial(o: { color: THREE.ColorRepresentation; opacity?: 
 
 /** X-ray silhouette for pieces hidden behind terrain or trees: drawn only where something at least
  * `margin` world units in front covers it (so a figure never ghosts through itself). */
-export function silhouetteMaterial(opacity = 0.42, margin = 0.45): THREE.ShaderMaterial {
+export function silhouetteMaterial(opacity = 0.42, margin = 0.75): THREE.ShaderMaterial {
   return new THREE.ShaderMaterial({
     uniforms: { opacity: { value: opacity } },
     vertexShader: /* glsl */ `

@@ -20,8 +20,9 @@ export interface World {
   onFrame(cb: (dt: number, time: number) => void): () => void
   /** Trees and props are removed on these tiles (cities stand there). */
   setCleared(tiles: TileId[]): void
-  /** Move the camera target to a tile. */
-  focus(tile: TileId, animate: boolean): void
+  /** Move the camera target to a tile. With `{ zoom: 'unit' }` also come in to a distance where a
+   * unit is comfortably large (about 48 CSS px tall); never zooms out. */
+  focus(tile: TileId, animate: boolean, opts?: { zoom?: 'unit' | 'keep' }): void
   /** Call when the container changes size. */
   resize(): void
   dispose(): void
@@ -32,6 +33,9 @@ export interface World {
   setQuality?(q: WorldQuality | 'auto'): void
   /** Return the camera to the default framing of the whole board. */
   home?(animate?: boolean): void
+  /** Screen areas covered by UI (CSS px from each edge of the canvas). Framing and focus centre
+   * on the uncovered rest. Call whenever the HUD changes size. */
+  setViewInsets?(insets: { top: number; bottom: number; left: number; right: number }): void
 }
 
 /** 'ultra' adds screen-space ambient occlusion; it is never picked automatically. */

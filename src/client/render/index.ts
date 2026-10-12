@@ -50,7 +50,7 @@ export const createGameView: CreateGameView = (container, map, handlers) => {
   let clearedKey = ''
   let playback: { tl: Timeline; next: GameState; resolve: () => void } | null = null
   let pending: { state: GameState; me: PlayerId | null } | null = null
-  const debug: GameViewDebug = { timeScale: 1, seek() {}, time: () => playback?.tl.t ?? -1, frameMs: 0 }
+  const debug: GameViewDebug & { layers?: unknown } = { timeScale: 1, seek() {}, time: () => playback?.tl.t ?? -1, frameMs: 0 }
 
   const territoryFromCities = (animate: boolean) => {
     const list: TerritoryCity[] = [...cities.cities.values()].map((c) => ({
@@ -183,6 +183,7 @@ export const createGameView: CreateGameView = (container, map, handlers) => {
     debug.timeScale = 0
   }
 
+  debug.layers = { units, cities }
   const offFrame = world.onFrame((dt, time) => {
     const t0 = performance.now()
     if (hoverAt) {
