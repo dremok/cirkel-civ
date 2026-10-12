@@ -20,8 +20,25 @@ export const NATURE = {
   rock: '#8F8B78',
   earth: '#A2825F', strataLight: '#978A7C', strataRock: '#857868', strataDeep: '#7A6E64', base: '#655C55',
   trunk: '#6B5040', wheat: '#E3CB7E', flowerA: '#F4EFE2', flowerB: '#F2CF5B', flowerC: '#D99AB8',
+  pineTeal: '#2B5C55', pineTealLight: '#47806B', spruce: '#2E5A4A',
+  oak: '#35764B', oakLight: '#539856', olive: '#58783C', oliveLight: '#7E9A4C',
+  birch: '#8DB552', birchLight: '#B4CF6A', birchBark: '#EEE9DF', gold: '#D9A43A', goldLight: '#EEC65C',
+  fern: '#5E9A4C', moss: '#74885A', mushroom: '#C8463A', mushroomCream: '#E9DCC4', log: '#7A5A44', reed: '#8FA65A', cattail: '#7B5638',
+  poppy: '#D9473A', lavender: '#A58BD0', buttercup: '#F2CC4A', daisy: '#F6F1E6', clover: '#5E9449',
   skyZenith: '#8FB8D8', skyHorizon: '#F3E3CC',
-  sun: '#FFDAAA', skyFill: '#9BB8D6', groundBounce: '#C9B08A',
+  sun: '#FFD7A0', skyFill: '#A6B2DE', groundBounce: '#E2C9C2',
+}
+
+/** Hue flavours per surface, mixed across the board by slow world-space noise (see terrain.ts). */
+export const FLAVOURS = {
+  meadow: ['#98C26A', '#A5BB7E', '#AEC765', '#85B568', '#9DC477'], // spring, sage, chartreuse, meadow, fresh
+  plains: ['#E2C46E', '#D9C383', '#E6B678', '#D6B962'], // honey, wheat, apricot, straw
+  forest: ['#4F8550', '#5D8A47', '#46795A', '#6A8A44'], // emerald, olive, teal moss, olive gold
+  hills: ['#B0AD74', '#A3A77E', '#BCAE70', '#9DAA78'], // olive ochre, heath, gold, sage
+  beach: ['#EEDDB7', '#EDCDB3', '#E8D6A9', '#F0D9C0'], // cream, rose, straw, peach
+  rock: ['#968D9A', '#8C7C94', '#808799', '#9A8E88'], // warm grey, plum, slate, taupe
+  strata: { turfShadow: '#5C7B44', ochre: '#C29659', rust: '#A9714F', umber: '#86664F', plum: '#7C6A6C', deep: '#665A5C', base: '#544B4F' },
+  moss: '#7E9A55', lichen: '#B9B987',
 }
 
 export interface PlayerColor { name: string; base: string; light: string; dark: string }

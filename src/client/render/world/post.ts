@@ -1,10 +1,10 @@
 // Ultra tier only: N8AO ambient occlusion (soft contact shading under trees, props and pieces, in
-// seams and at cliff feet), SMAA, then tone mapping. Other tiers render straight to the screen,
+// seams and at cliff feet), a gentle bloom, tone mapping and grade, SMAA. Other tiers render straight to the screen,
 // where the baked occlusion in the terrain does most of this work for a fraction of the cost.
 
 import * as THREE from 'three'
 import { N8AOPostPass } from 'n8ao'
-import { Effect, EffectComposer, EffectPass, RenderPass, SMAAEffect, SMAAPreset } from 'postprocessing'
+import { BloomEffect, Effect, EffectComposer, EffectPass, RenderPass, SMAAEffect, SMAAPreset } from 'postprocessing'
 import { GRADE_GLSL } from './grade.ts'
 
 /** Neutral tone mapping and the world's grade, identical to the direct path's CustomToneMapping. */
@@ -40,14 +40,20 @@ export function createPost(renderer: THREE.WebGLRenderer, scene: THREE.Scene, ca
   const ao = new N8AOPostPass(scene, camera, size.x, size.y)
   ao.setQualityMode('Low')
   ao.configuration.halfRes = true
-  ao.configuration.aoRadius = 0.7
-  ao.configuration.distanceFalloff = 1.0
-  ao.configuration.intensity = 3.2
-  ao.configuration.color = new THREE.Color('#2B2A3A')
+  ao.configuration.aoRadius = 0.32
+  ao.configuration.distanceFalloff = 0.6
+  ao.configuration.intensity = 1.3
+  // Transparent things (sea, contact shadows) never occlude; skipping the extra pass saves a lot.
+  ao.configuration.transparencyAware = false
+  ao.configuration.color = new THREE.Color('#2E3A3A')
   ao.configuration.gammaCorrection = false
   composer.addPass(ao)
-  composer.addPass(new EffectPass(camera, new GradeEffect(), new SMAAEffect({ preset: SMAAPreset.HIGH })))
+  // A gentle glow on the brightest highlights and water glints (no bloom soup).
+  const bloom = new BloomEffect({ mipmapBlur: true, luminanceThreshold: 0.82, luminanceSmoothing: 0.2, intensity: 0.55, radius: 0.7 })
+  composer.addPass(new EffectPass(camera, bloom, new GradeEffect(), new SMAAEffect({ preset: SMAAPreset.HIGH })))
   return {
+    /** Debug: the passes, for toggling while tuning. */
+    passes: { ao, bloom },
     render(dt: number) {
       composer.render(dt)
     },

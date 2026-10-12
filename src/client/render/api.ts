@@ -31,8 +31,10 @@ export interface World {
   readonly quality?: WorldQuality
   /** Force a quality tier, or 'auto' to detect and adapt. */
   setQuality?(q: WorldQuality | 'auto'): void
-  /** Return the camera to the default framing of the whole board. */
-  home?(animate?: boolean): void
+  /** Return the camera to the default framing: the whole board, or with `around` a few hexes
+   * around that tile (e.g. the player's capital; about 7 hexes across on a phone). The choice is
+   * remembered across resizes; pass `around: null` to go back to the whole board. */
+  home?(animate?: boolean, opts?: { around?: TileId | null }): void
   /** Screen areas covered by UI (CSS px from each edge of the canvas). Framing and focus centre
    * on the uncovered rest. Call whenever the HUD changes size. */
   setViewInsets?(insets: { top: number; bottom: number; left: number; right: number }): void

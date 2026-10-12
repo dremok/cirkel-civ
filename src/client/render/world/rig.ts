@@ -10,15 +10,23 @@ const PITCH_MIN = THREE.MathUtils.degToRad(24)
 const PITCH_MAX = THREE.MathUtils.degToRad(80)
 const DIST_MIN = 5
 
-interface State { x: number; z: number; yaw: number; pitch: number; dist: number }
+interface State { x: number; y: number; z: number; yaw: number; pitch: number; dist: number }
+
+export interface Insets { top: number; bottom: number; left: number; right: number }
+
+/** How tall a unit (about 0.8 world units) should look after focus(..., 'unit'), in CSS px. */
+const UNIT_PX = 48
 
 export interface Rig {
   update(dt: number): void
-  /** Frame the whole board from the default three-quarter view. */
-  home(animate: boolean): void
+  /** Frame the whole board from the default three-quarter view, or a region around a point. */
+  home(animate: boolean, around?: { x: number; y: number; z: number } | null): void
   /** Start pulled back and turned a little, then glide into the home framing. */
   intro(): void
-  focus(x: number, z: number, animate: boolean): void
+  /** Pan to (x, y, z); with zoom 'unit', also come in to a tactical distance (never zooms out). */
+  focus(x: number, y: number, z: number, animate: boolean, zoom?: 'unit' | 'keep'): void
+  /** Screen areas covered by UI, in CSS px: framing and focus centre on the rest. */
+  setInsets(insets: Insets): void
   resize(): void
   /** Default yaw, chosen from the aspect on the first framing (the light is placed relative to it). */
   readonly defaultYaw: number
@@ -31,7 +39,7 @@ export interface Rig {
 export function createRig(camera: THREE.PerspectiveCamera, dom: HTMLElement, layout: Layout, surfaceY: (cx: number, cy: number) => number | null): Rig {
   const cx = (layout.minX + layout.maxX) / 2
   const cz = (layout.minZ + layout.maxZ) / 2
-  const goal: State = { x: cx, z: cz, yaw: 0, pitch: 0.95, dist: 30 }
+  const goal: State = { x: cx, y: TARGET_Y, z: cz, yaw: 0, pitch: 0.95, dist: 30 }
   const cur: State = { ...goal }
   let maxDist = 60
   let rate = 7 // damping rate (1/s); faster while the user is touching
@@ -43,13 +51,27 @@ export function createRig(camera: THREE.PerspectiveCamera, dom: HTMLElement, lay
 
   const portrait = () => dom.clientWidth / Math.max(1, dom.clientHeight) < 0.85
   const sized = () => dom.clientWidth > 1 && dom.clientHeight > 1
+  const insets: Insets = { top: 0, bottom: 0, left: 0, right: 0 }
+
+  /** Shift the projection so the look-at point sits in the middle of the uncovered area. */
+  function applyView(cam: THREE.PerspectiveCamera) {
+    const w = dom.clientWidth, h = dom.clientHeight
+    const ox = (insets.right - insets.left) / 2, oy = (insets.bottom - insets.top) / 2
+    if (w > 1 && h > 1 && (ox !== 0 || oy !== 0)) cam.setViewOffset(w, h, ox, oy, w, h)
+    else cam.clearViewOffset()
+  }
+  /** The uncovered area in normalised device coordinates. */
+  function visibleNdc() {
+    const w = Math.max(1, dom.clientWidth), h = Math.max(1, dom.clientHeight)
+    return { x0: -1 + (2 * insets.left) / w, x1: 1 - (2 * insets.right) / w, y0: -1 + (2 * insets.bottom) / h, y1: 1 - (2 * insets.top) / h }
+  }
   // Portrait screens look along the board's long axis.
   let defaultYaw: number | null = null
 
   function place(cam: THREE.PerspectiveCamera, s: State) {
     const cp = Math.cos(s.pitch)
-    cam.position.set(s.x + Math.sin(s.yaw) * cp * s.dist, TARGET_Y + Math.sin(s.pitch) * s.dist, s.z + Math.cos(s.yaw) * cp * s.dist)
-    tmp.set(s.x, TARGET_Y, s.z)
+    cam.position.set(s.x + Math.sin(s.yaw) * cp * s.dist, s.y + Math.sin(s.pitch) * s.dist, s.z + Math.cos(s.yaw) * cp * s.dist)
+    tmp.set(s.x, s.y, s.z)
     cam.lookAt(tmp)
     cam.updateMatrixWorld()
   }
@@ -59,7 +81,7 @@ export function createRig(camera: THREE.PerspectiveCamera, dom: HTMLElement, lay
     vcam.aspect = camera.aspect
     vcam.near = camera.near
     vcam.far = camera.far
-    vcam.updateProjectionMatrix()
+    applyView(vcam)
     place(vcam, goal)
   }
 
@@ -86,10 +108,13 @@ export function createRig(camera: THREE.PerspectiveCamera, dom: HTMLElement, lay
 
   /** Target and distance at which the whole board fits the view, centred, for a yaw and pitch. */
   function fitView(yaw: number, pitch: number): State {
-    const s: State = { x: cx, z: cz, yaw, pitch, dist: 0 }
+    const s: State = { x: cx, y: TARGET_Y, z: cz, yaw, pitch, dist: 0 }
     vcam.fov = camera.fov
     vcam.aspect = camera.aspect
-    vcam.updateProjectionMatrix()
+    applyView(vcam)
+    const v = visibleNdc()
+    const xc = (v.x0 + v.x1) / 2, halfW = (v.x1 - v.x0) / 2
+    const yc = (v.y0 + v.y1) / 2, fullH = v.y1 - v.y0
     const corners: THREE.Vector3[] = []
     for (const x of [layout.minX, layout.maxX]) for (const z of [layout.minZ, layout.maxZ]) for (const y of [BOTTOM_Y, 0.6]) corners.push(new THREE.Vector3(x, y, z))
     const extent = () => {
@@ -98,7 +123,7 @@ export function createRig(camera: THREE.PerspectiveCamera, dom: HTMLElement, lay
       for (const c of corners) {
         tmp.copy(c).project(vcam)
         if (tmp.z > 1) return { x: Infinity, y0: -Infinity, y1: Infinity }
-        x = Math.max(x, Math.abs(tmp.x))
+        x = Math.max(x, Math.abs(tmp.x - xc))
         y0 = Math.min(y0, tmp.y)
         y1 = Math.max(y1, tmp.y)
       }
@@ -110,16 +135,16 @@ export function createRig(camera: THREE.PerspectiveCamera, dom: HTMLElement, lay
       for (let i = 0; i < 32; i++) {
         s.dist = (lo + hi) / 2
         const e = extent()
-        if (e.x <= 0.93 && e.y1 - e.y0 <= 1.7) hi = s.dist
+        if (e.x <= halfW * 0.93 && e.y1 - e.y0 <= fullH * 0.85) hi = s.dist
         else lo = s.dist
       }
       s.dist = hi
       // Slide the target along the view so the board sits centred (a touch low, for the top bar).
       const e0 = extent()
-      const c0 = (e0.y0 + e0.y1) / 2 + 0.02
+      const c0 = (e0.y0 + e0.y1) / 2 - yc + 0.01 * fullH
       s.x += fx; s.z += fz
       const e1 = extent()
-      const slope = (e1.y0 + e1.y1) / 2 + 0.02 - c0
+      const slope = (e1.y0 + e1.y1) / 2 - yc + 0.01 * fullH - c0
       s.x -= fx; s.z -= fz
       if (Math.abs(slope) > 1e-6) {
         const k = -c0 / slope
@@ -132,12 +157,57 @@ export function createRig(camera: THREE.PerspectiveCamera, dom: HTMLElement, lay
 
   const homePitch = () => (portrait() ? 0.92 : 0.76)
 
-  function home(animate: boolean) {
+  /** View centred on a point, close enough that a disc of `radius` world units fills the visible area. */
+  function regionView(px: number, py: number, pz: number, radius: number): State {
+    const s: State = { x: px, y: py, z: pz, yaw: defaultYaw ?? 0, pitch: homePitch(), dist: 0 }
+    vcam.fov = camera.fov
+    vcam.aspect = camera.aspect
+    applyView(vcam)
+    const v = visibleNdc()
+    const xc = (v.x0 + v.x1) / 2, yc = (v.y0 + v.y1) / 2
+    const hw = ((v.x1 - v.x0) / 2) * 0.94, hh = ((v.y1 - v.y0) / 2) * 0.9
+    const pts: THREE.Vector3[] = []
+    for (let i = 0; i < 16; i++) {
+      const a = (i / 16) * Math.PI * 2
+      pts.push(new THREE.Vector3(px + Math.cos(a) * radius, py, pz + Math.sin(a) * radius))
+    }
+    let lo = DIST_MIN, hi = 300
+    for (let i = 0; i < 32; i++) {
+      s.dist = (lo + hi) / 2
+      place(vcam, s)
+      let ok = true
+      for (const p of pts) {
+        tmp.copy(p).project(vcam)
+        if (tmp.z > 1 || Math.abs(tmp.x - xc) > hw || Math.abs(tmp.y - yc) > hh) { ok = false; break }
+      }
+      if (ok) hi = s.dist
+      else lo = s.dist
+    }
+    s.dist = hi
+    return s
+  }
+
+  let homeAround: { x: number; y: number; z: number } | null = null
+
+  /** Distance at which a unit looks UNIT_PX tall. */
+  const unitDist = () => (0.8 * Math.max(1, dom.clientHeight)) / (2 * UNIT_PX * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2))
+
+  function home(animate: boolean, around?: { x: number; y: number; z: number } | null) {
+    if (around !== undefined) homeAround = around
     if (!sized()) return
     defaultYaw ??= portrait() ? Math.PI / 2 : 0
     const v = fitView(defaultYaw, homePitch())
-    Object.assign(goal, v)
     maxDist = v.dist * 1.3
+    if (homeAround) {
+      // A player's own corner of the board: a few hexes around it (more on wide screens).
+      const r = (portrait() ? 3.4 : 5.5) * 1.732
+      const rv = regionView(homeAround.x, homeAround.y, homeAround.z, r)
+      if (rv.dist < v.dist) Object.assign(v, rv)
+    } else if (portrait()) {
+      // Phones start a little closer than the whole board (pinch out to see it all).
+      v.dist = Math.max(DIST_MIN, v.dist * 0.72)
+    }
+    Object.assign(goal, v)
     rate = 5
     if (!animate) Object.assign(cur, goal)
     place(camera, cur)
@@ -323,6 +393,7 @@ export function createRig(camera: THREE.PerspectiveCamera, dom: HTMLElement, lay
     const k = 1 - Math.exp(-dt * rate)
     cur.x += (goal.x - cur.x) * k
     cur.z += (goal.z - cur.z) * k
+    cur.y += (goal.y - cur.y) * k
     cur.yaw += angleDiff(goal.yaw, cur.yaw) * k
     cur.pitch += (goal.pitch - cur.pitch) * k
     cur.dist *= Math.pow(goal.dist / cur.dist, k)
@@ -332,9 +403,11 @@ export function createRig(camera: THREE.PerspectiveCamera, dom: HTMLElement, lay
   return {
     update,
     home,
-    focus(x, z, animate) {
+    focus(x, y, z, animate, zoom = 'keep') {
       goal.x = x
+      goal.y = y
       goal.z = z
+      if (zoom === 'unit') goal.dist = Math.min(goal.dist, Math.max(DIST_MIN, unitDist()))
       clampGoal()
       vel.set(0, 0)
       rate = 5
@@ -352,7 +425,16 @@ export function createRig(camera: THREE.PerspectiveCamera, dom: HTMLElement, lay
       rate = 2.2
       place(camera, cur)
     },
+    setInsets(next) {
+      const w = Math.max(1, dom.clientWidth), h = Math.max(1, dom.clientHeight)
+      insets.top = THREE.MathUtils.clamp(next.top || 0, 0, h * 0.6)
+      insets.bottom = THREE.MathUtils.clamp(next.bottom || 0, 0, h * 0.6)
+      insets.left = THREE.MathUtils.clamp(next.left || 0, 0, w * 0.6)
+      insets.right = THREE.MathUtils.clamp(next.right || 0, 0, w * 0.6)
+      this.resize()
+    },
     resize() {
+      applyView(camera)
       if (defaultYaw === null) return home(false)
       maxDist = fitView(defaultYaw, homePitch()).dist * 1.3
       clampGoal()

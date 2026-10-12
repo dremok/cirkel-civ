@@ -7,6 +7,8 @@ import { WATER_Y } from './layout.ts'
 
 export const shared = {
   uTime: { value: 0 },
+  /** Strength of the low mist pooling in valleys and over the sea (0 = none). */
+  uMist: { value: 0.26 },
   /** Cloud field offset (drifts slowly). */
   uCloudOffset: { value: new THREE.Vector2(0, 0) },
   /** 0 = no cloud shadows, 1 = full. */
@@ -27,6 +29,28 @@ float wNoise(vec2 p) {
   return mix(mix(wHash12(i), wHash12(i + vec2(1.0, 0.0)), u.x),
              mix(wHash12(i + vec2(0.0, 1.0)), wHash12(i + vec2(1.0, 1.0)), u.x), u.y);
 }
+`
+
+/** Fog, plus soft mist that pools low (valleys, the sea) and drifts slowly. */
+const FOG_WITH_MIST = /* glsl */ `
+#ifdef USE_FOG
+  float fogFactor = smoothstep( fogNear, fogFar, vFogDepth );
+  // Only over the sea and low valley floors: never on the board's sides.
+  float mistLow = smoothstep( -0.75, -0.3, vWorldP.y ) * ( 1.0 - smoothstep( -0.14, 0.05, vWorldP.y ) ) * smoothstep( 0.5, 0.9, vUp );
+  vec2 mq = vWorldP.xz * 0.23 + vec2( uTime * 0.012, uTime * 0.005 );
+  float mistN = wNoise( mq ) * 0.65 + wNoise( mq * 2.7 - vec2( uTime * 0.02, 0.0 ) ) * 0.35;
+  float mist = mistLow * smoothstep( 0.35, 0.8, mistN ) * uMist;
+  float fogMix = max( fogFactor, mist );
+  #ifdef TONE_MAPPING
+    // Drawing to the screen: the colour is already display-encoded here.
+    gl_FragColor.rgb = mix( gl_FragColor.rgb, fogColor, fogMix );
+  #else
+    // Drawing linear light into the post chain: mix perceptually so haze lifts darks the same way.
+    vec3 fogG = pow( max( gl_FragColor.rgb, 0.0 ), vec3( 1.0 / 2.2 ) );
+    gl_FragColor.rgb = pow( mix( fogG, pow( fogColor, vec3( 1.0 / 2.2 ) ), fogMix ), vec3( 2.2 ) );
+  #endif
+  gl_FragColor.a = max( gl_FragColor.a, mist * 0.8 );
+#endif
 `
 
 const CLOUD_FN = /* glsl */ `
@@ -82,6 +106,7 @@ export function patchMaterial<T extends THREE.Material>(material: T, opts: Patch
     shader.uniforms.uCloudOffset = shared.uCloudOffset
     shader.uniforms.uCloudStrength = shared.uCloudStrength
     shader.uniforms.uWind = shared.uWind
+    shader.uniforms.uMist = shared.uMist
     let vs = shader.vertexShader
     let fs = shader.fragmentShader
     vs = vs.replace(
@@ -126,8 +151,9 @@ export function patchMaterial<T extends THREE.Material>(material: T, opts: Patch
     )
     fs = fs.replace(
       '#include <common>',
-      `#include <common>\nuniform float uTime;\nvarying vec3 vWorldP;\nvarying float vUp;${opts.topDetail ? '\nvarying float vDetail;' : ''}\n${GLSL_NOISE}\n${CLOUD_FN}`,
+      `#include <common>\nuniform float uTime;\nuniform float uMist;\nvarying vec3 vWorldP;\nvarying float vUp;${opts.topDetail ? '\nvarying float vDetail;' : ''}\n${GLSL_NOISE}\n${CLOUD_FN}`,
     )
+    fs = fs.replace('#include <fog_fragment>', FOG_WITH_MIST)
     fs = fs.replace(
       '#include <lights_fragment_begin>',
       `float wCloud = worldCloud(vWorldP.xz);\n${opts.caustics ? CAUSTICS : ''}\n${LIGHTS_WITH_CLOUDS}`,

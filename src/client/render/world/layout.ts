@@ -106,7 +106,6 @@ export function buildLayout(map: GameMap): Layout {
       seaDist[id] = Math.max(1, d)
       let depth = SEA_DEPTH[Math.max(1, d)]
       if (t.biome === 'shallow') depth = Math.min(depth, 0.5)
-      depth += (hash01(id, 7) - 0.5) * 0.06
       top[id] = WATER_Y - depth
       stand[id] = WATER_Y
       pickTop[id] = WATER_Y

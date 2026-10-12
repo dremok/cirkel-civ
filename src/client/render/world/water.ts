@@ -130,7 +130,8 @@ export function buildWater(layout: Layout) {
             float wDepth = wFld.g * ${DEPTH_RANGE.toFixed(2)};
             vec3 wCol = mix(uShallow, uMid, smoothstep(0.02, 0.4, wDepth));
             wCol = mix(wCol, uDeep, smoothstep(0.4, 1.1, wDepth));
-            float wAlpha = mix(0.22, 0.9, smoothstep(0.05, 0.95, wDepth));
+            // Clear in the shallows, then quickly a body of colour: the stepped seabed never shows.
+            float wAlpha = mix(0.3, 0.97, smoothstep(0.04, 0.5, wDepth));
             float wN = wNoise(vWorldP.xz * 2.6 + vec2(uTime * 0.11, -uTime * 0.08));
             float wN2 = wNoise(vWorldP.xz * 5.0 - vec2(uTime * 0.05, uTime * 0.09));
             float wAA = max(fwidth(wShore), 0.004);
@@ -178,9 +179,9 @@ export function buildWater(layout: Layout) {
               float a = clamp(diffuseColor.a + fres * 0.25, 0.0, 1.0);
               outgoingLight = outgoingLight - wSpec + wSpec / max(a, 0.5);
               // A few sun sparkles twinkling on the open water.
-              vec2 sp = vWorldP.xz * 17.0;
+              vec2 sp = vWorldP.xz * 27.0;
               float tw = wNoise(sp + vec2(uTime * 0.7, -uTime * 0.45)) * wNoise(sp * 1.73 - vec2(uTime * 0.55, uTime * 0.35)) * wNoise(vWorldP.xz * 0.6 + uTime * 0.03);
-              float spark = smoothstep(0.5, 0.58, tw) * (1.0 - wFoam) * smoothstep(0.15, 0.5, wDepth) * wCloud
+              float spark = smoothstep(0.56, 0.62, tw) * (1.0 - wFoam) * smoothstep(0.15, 0.5, wDepth) * wCloud
                 * (1.0 - smoothstep(0.018, 0.03, length(fwidth(vWorldP.xz))));
               #if NUM_DIR_LIGHTS > 0
                 outgoingLight += directionalLights[0].color * spark * 0.9;

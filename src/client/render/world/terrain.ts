@@ -4,19 +4,21 @@
 import * as THREE from 'three'
 import { hexCorner } from '../../../engine/hex.ts'
 import type { Biome } from '../../../engine/types.ts'
-import { BIOME, NATURE } from '../palette.ts'
+import { BIOME, FLAVOURS } from '../palette.ts'
 import { GeoBuilder, lin, mix3, scale3, type Vec } from './builder.ts'
 import { BEVEL_DROP, BEVEL_IN, BOTTOM_Y, WATER_Y, hash01, type Layout } from './layout.ts'
 import { patchMaterial } from './shading.ts'
 
 type RGB = [number, number, number]
 
+const ST = FLAVOURS.strata
 const C = {
-  earth: lin(NATURE.earth),
-  rockA: lin(NATURE.strataLight),
-  rockB: lin(NATURE.strataRock),
-  rockC: lin(NATURE.strataDeep),
-  base: lin(NATURE.base),
+  earth: lin(ST.ochre),
+  rust: lin(ST.rust),
+  rockA: lin(ST.umber),
+  rockB: lin(ST.plum),
+  rockC: lin(ST.deep),
+  base: lin(ST.base),
   high: lin(BIOME.mountain.base, 0.92),
   highDark: lin(BIOME.mountain.dark),
   highLight: lin(BIOME.mountain.light),
@@ -34,40 +36,73 @@ for (let i = 0; i < 6; i++) {
   RING.push(a, { x: (a.x + b.x) / 2, z: (a.z + b.z) / 2 })
 }
 
-function topColor(layout: Layout, id: number): RGB {
+/** Smooth value noise in [0, 1] over the board's plane (for colour drifts across tiles). */
+function vnoise(x: number, z: number, seed: number): number {
+  const xi = Math.floor(x), zi = Math.floor(z)
+  const fx = x - xi, fz = z - zi
+  const u = fx * fx * (3 - 2 * fx), v = fz * fz * (3 - 2 * fz)
+  const h = (i: number, j: number) => hash01(i * 7919 + j * 104729, seed)
+  return (h(xi, zi) * (1 - u) + h(xi + 1, zi) * u) * (1 - v) + (h(xi, zi + 1) * (1 - u) + h(xi + 1, zi + 1) * u) * v
+}
+
+const FL = {
+  meadow: FLAVOURS.meadow.map((c) => lin(c)),
+  plains: FLAVOURS.plains.map((c) => lin(c)),
+  forest: FLAVOURS.forest.map((c) => lin(c)),
+  hills: FLAVOURS.hills.map((c) => lin(c)),
+  beach: FLAVOURS.beach.map((c) => lin(c)),
+  rock: FLAVOURS.rock.map((c) => lin(c)),
+}
+
+/** Blend through a list of flavours by a 0..1 parameter (smoothly, wrapping). */
+function flavour(list: RGB[], t: number): RGB {
+  const f = ((t % 1) + 1) % 1 * list.length
+  const i = Math.floor(f)
+  const k = f - i
+  const s = k * k * (3 - 2 * k)
+  return mix3(list[i % list.length], list[(i + 1) % list.length], s)
+}
+
+/** Top colour of a tile at a world position: hue drifts across the board, varying within tiles. */
+function topColorAt(layout: Layout, id: number, x: number, z: number): RGB {
   const t = layout.map.tiles[id]
-  const j = 1 + (hash01(id, 1) - 0.5) * 0.07
-  const m = t.moisture
+  const drift = vnoise(x * 0.16, z * 0.16, 3) * 0.7 + vnoise(x * 0.45, z * 0.45, 4) * 0.3
+  const local = (vnoise(x * 1.3, z * 1.3, 5) - 0.5) * 0.05
+  const j = 1 + (hash01(id, 1) - 0.5) * 0.05 + local
   let c: RGB
   switch (t.biome) {
-    case 'grass': c = mix3(lin(BIOME.grass.light), lin(BIOME.grass.base), THREE.MathUtils.clamp((m - 0.3) / 0.36, 0, 1) * 0.6 + 0.4); break
-    case 'plains': c = mix3(lin(BIOME.plains.light), lin(BIOME.plains.base), THREE.MathUtils.clamp(m / 0.3, 0, 1) * 0.7 + 0.3); break
-    case 'forest': c = mix3(lin(BIOME.forest.base), lin(BIOME.forest.dark), hash01(id, 2) * 0.5); break
-    case 'hills': c = mix3(mix3(lin(BIOME.hills.base), lin(BIOME.grass.dark), 0.22), lin(BIOME.hills.light), hash01(id, 2) * 0.35); break
-    case 'mountain': c = mix3(lin(BIOME.mountain.base), lin(BIOME.mountain.light), 0.35); break
-    case 'snow': c = lin(BIOME.snow.base); break
-    case 'beach': c = mix3(lin(BIOME.beach.base), lin(BIOME.beach.light), hash01(id, 2) * 0.5); break
-    case 'shallow': c = lin('#E8E4D6', 0.95); break
+    case 'grass': c = flavour(FL.meadow, drift * 1.6 + t.moisture * 0.4); break
+    case 'plains': c = flavour(FL.plains, drift * 1.4 + t.moisture * 0.5); break
+    case 'forest': c = flavour(FL.forest, drift * 1.5); break
+    case 'hills': c = flavour(FL.hills, drift * 1.3); break
+    case 'mountain': c = mix3(flavour(FL.rock, drift * 1.5), lin(BIOME.mountain.light), 0.25); break
+    case 'snow': return lin(BIOME.snow.base)
+    case 'beach': c = flavour(FL.beach, drift * 1.6); break
+    case 'shallow': c = lin('#E8E2D0', 0.95); break
     default: c = lin('#C9CBBE'); break
   }
-  return scale3(c, t.biome === 'snow' ? 1 : j)
+  return scale3(c, j)
+}
+
+/** Darker band colour just under a tile's top edge (its turf seen from the side). */
+function turfSide(layout: Layout, id: number): RGB {
+  return scale3(mix3(topColorAt(layout, id, layout.cx[id], layout.cz[id]), lin(FLAVOURS.strata.turfShadow), 0.45), 0.86)
 }
 
 /** Colour of a column's side at world height y, for a column whose top is at `top`. */
-function sideColor(biome: Biome, top: number, y: number, jitter: number): RGB {
+function sideColor(biome: Biome, top: number, y: number, jitter: number, turf: RGB): RGB {
   const depth = top - y
   const land = biome !== 'deep' && biome !== 'shallow'
   if (land) {
-    const turf = 0.075
+    const turfH = 0.075
     if (biome === 'snow') {
       if (depth < 0.11) return scale3(C.snow, 0.94)
     } else if (biome === 'mountain') {
-      if (depth < turf) return scale3(C.highLight, 0.9)
+      if (depth < turfH) return scale3(C.highLight, 0.9)
     } else if (biome === 'beach') {
-      if (depth < 0.32) return scale3(C.sand, depth < turf ? 0.9 : 0.8)
-    } else if (depth < turf) {
-      const g: Record<string, string> = { grass: BIOME.grass.dark, forest: BIOME.forest.dark, plains: BIOME.plains.dark, hills: BIOME.hills.dark }
-      return lin(g[biome] ?? BIOME.grass.dark, 0.92)
+      if (depth < 0.32) return scale3(C.sand, depth < turfH ? 0.9 : 0.8)
+    } else if (depth < turfH) {
+      return turf
     } else if (depth < (biome === 'hills' ? 0.18 : 0.28)) {
       return C.earth
     }
@@ -78,11 +113,11 @@ function sideColor(biome: Biome, top: number, y: number, jitter: number): RGB {
   }
   // World-height geology: the same layers line up across neighbouring columns.
   const yy = y + jitter
-  if (yy > 0.85) return C.high
-  if (yy > 0.2) return mix3(C.high, C.rockA, 0.55)
-  if (yy > -0.5) return C.rockA
-  if (yy > -1.15) return C.rockB
-  if (yy > -1.72) return C.rockC
+  if (yy > 0.85) return biome === 'mountain' || biome === 'snow' ? C.high : mix3(C.rockA, C.earth, 0.3)
+  if (yy > 0.2) return mix3(C.rockA, C.rust, 0.35)
+  if (yy > -0.5) return C.rust
+  if (yy > -1.15) return C.rockA
+  if (yy > -1.72) return C.rockB
   return C.base
 }
 
@@ -109,7 +144,14 @@ export function buildTerrain(layout: Layout): { mesh: THREE.Mesh; dispose(): voi
   for (const t of map.tiles) {
     const id = t.id
     const x0 = cx[id], z0 = cz[id], y0 = top[id]
-    const col = topColor(layout, id)
+    const col = topColorAt(layout, id, x0, z0)
+    // Colour sampled where each ring vertex sits, so hues drift smoothly across neighbouring tiles.
+    const colMid: RGB[] = [], colIn: RGB[] = []
+    for (let j = 0; j < 12; j++) {
+      colMid.push(topColorAt(layout, id, x0 + RING[j].x * sMid, z0 + RING[j].z * sMid))
+      colIn.push(topColorAt(layout, id, x0 + RING[j].x * sIn, z0 + RING[j].z * sIn))
+    }
+    const turf = turfSide(layout, id)
     b.detail = DETAIL[t.biome]
 
     // Height of each neighbour's top above ours (for baked occlusion).
@@ -142,15 +184,17 @@ export function buildTerrain(layout: Layout): { mesh: THREE.Mesh; dispose(): voi
     for (let j = 0; j < 12; j++) {
       const k = (j + 1) % 12
       const aoA = (j2: number) => 1 - (1 - ringAo[j2]) * 0.18
-      const cA = sw(scale3(mix3(col, wetC, wetAt(j) * 0.15), aoA(j)), y0), cA2 = sw(scale3(mix3(col, wetC, wetAt(k) * 0.15), aoA(k)), y0)
-      const cB = sw(scale3(mix3(col, wetC, wetAt(j) * 0.85), ringAo[j]), y0), cB2 = sw(scale3(mix3(col, wetC, wetAt(k) * 0.85), ringAo[k]), y0)
+      const cA = sw(scale3(mix3(colMid[j], wetC, wetAt(j) * 0.15), aoA(j)), y0), cA2 = sw(scale3(mix3(colMid[k], wetC, wetAt(k) * 0.15), aoA(k)), y0)
+      const cB = sw(scale3(mix3(colIn[j], wetC, wetAt(j) * 0.85), ringAo[j]), y0), cB2 = sw(scale3(mix3(colIn[k], wetC, wetAt(k) * 0.85), ringAo[k]), y0)
       b.triN(center, P(sMid, k, y0), P(sMid, j, y0), [0, 1, 0], sw(col, y0), cA2, cA)
       if (wet) {
         b.quad(P(sMid, j, y0), P(sMid, k, y0), P(1, k, y0), P(1, j, y0), cA, cA2, cB2, cB)
         continue
       }
       b.quad(P(sMid, j, y0), P(sMid, k, y0), P(sIn, k, y0), P(sIn, j, y0), cA, cA2, cB2, cB)
-      b.quad(P(sIn, j, y0), P(sIn, k, y0), P(1, k, yb), P(1, j, yb), cB, cB2, cB2, cB)
+      // The bevel: a painted, slightly lighter edge that catches the sun.
+      const e1 = scale3(cB, 1.07), e2 = scale3(cB2, 1.07)
+      b.quad(P(sIn, j, y0), P(sIn, k, y0), P(1, k, yb), P(1, j, yb), e1, e2, e2, e1)
     }
 
     // Sides: wherever the neighbour is lower (or off the board), down to its bevel edge.
@@ -176,7 +220,7 @@ export function buildTerrain(layout: Layout): { mesh: THREE.Mesh; dispose(): voi
       for (let k = 0; k < ys.length - 1; k++) {
         const hi = ys[k], lo = ys[k + 1]
         const mid = (hi + lo) / 2
-        const bc = sideColor(t.biome, y0, mid, jitter)
+        const bc = sideColor(t.biome, y0, mid, jitter, turf)
         const shade = (y: number) => {
           let s = 1
           if (!rim) s *= 1 - 0.42 * Math.max(0, 1 - (y - yBot) / footAo)

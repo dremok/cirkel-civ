@@ -6,6 +6,7 @@ import * as THREE from 'three'
 import type { GameMap } from '../../../engine/types.ts'
 import type { World, WorldQuality } from '../api.ts'
 import { NATURE } from '../palette.ts'
+import { buildMotes, buildVignette } from './atmosphere.ts'
 import { buildBirds } from './birds.ts'
 import { BOTTOM_Y, buildLayout } from './layout.ts'
 import { createPicker } from './pick.ts'
@@ -88,13 +89,13 @@ export function createWorld(container: HTMLElement, map: GameMap, opts: WorldOpt
   const sunDir = new THREE.Vector3()
   const center = new THREE.Vector3((layout.minX + layout.maxX) / 2, 0, (layout.minZ + layout.maxZ) / 2)
   const boardR = Math.hypot(layout.maxX - layout.minX, layout.maxZ - layout.minZ) / 2
-  const sun = new THREE.DirectionalLight(NATURE.sun, 2.85)
+  const sun = new THREE.DirectionalLight(NATURE.sun, 3.35)
   sun.castShadow = true
   sun.shadow.bias = -0.0004
   sun.shadow.normalBias = 0.025
   scene.add(sun, sun.target)
   let env: THREE.WebGLRenderTarget | null = null
-  scene.environmentIntensity = 0.75
+  scene.environmentIntensity = 0.55
   function placeSun() {
     sunDir.set(Math.cos(az) * Math.cos(SUN_ELEVATION), Math.sin(SUN_ELEVATION), -Math.sin(az) * Math.cos(SUN_ELEVATION))
     sunDir.applyAxisAngle(new THREE.Vector3(0, 1, 0), rig.defaultYaw).normalize()
@@ -106,7 +107,7 @@ export function createWorld(container: HTMLElement, map: GameMap, opts: WorldOpt
     scene.environment = env.texture
   }
 
-  const sky = buildSky()
+  const sky = buildSky({ minX: layout.minX, minZ: layout.minZ, maxX: layout.maxX, maxZ: layout.maxZ, y: BOTTOM_Y }, sunDir)
   scene.add(sky.mesh)
   const fog = new THREE.Fog(new THREE.Color(BACKDROP.haze), 30, 90)
   scene.fog = fog
@@ -119,6 +120,10 @@ export function createWorld(container: HTMLElement, map: GameMap, opts: WorldOpt
   scene.add(props.group)
   const birds = buildBirds(layout, 6)
   scene.add(birds.mesh)
+  const motes = buildMotes(layout, 220)
+  scene.add(motes.points)
+  const vignette = buildVignette()
+  scene.add(vignette.mesh)
 
   const drawSize = new THREE.Vector2()
   let post: ReturnType<typeof createPost> | null = null
@@ -137,6 +142,9 @@ export function createWorld(container: HTMLElement, map: GameMap, opts: WorldOpt
     renderer.setSize(container.clientWidth, container.clientHeight)
     renderer.getDrawingBufferSize(drawSize)
     sky.setSize(drawSize.x, drawSize.y)
+    vignette.setSize(drawSize.x, drawSize.y)
+    motes.setSize(drawSize.y)
+    motes.points.visible = t.birds
     post?.setSize(container.clientWidth, container.clientHeight)
     if (sun.shadow.mapSize.x !== t.shadow) {
       sun.shadow.mapSize.set(t.shadow, t.shadow)
@@ -162,20 +170,24 @@ export function createWorld(container: HTMLElement, map: GameMap, opts: WorldOpt
     const raw = (now - last) / 1000
     last = now
     const dt = Math.min(raw, 0.1)
+    // Before drawing: a tier change resizes the canvas, which would blank an already drawn frame.
+    if (adaptive) adapt(raw)
     time += dt
     shared.uTime.value = time
     shared.uCloudOffset.value.set(time * 0.012, time * 0.006)
     rig.update(dt)
-    sky.mesh.position.copy(camera.position)
+    sky.update(camera, time)
     // A gentle haze toward the far side: at most ~12 % at the far rim, at any zoom.
     const d = camera.position.distanceTo(center)
     fog.near = d + boardR * 0.3
     fog.far = d + boardR * 6
     if (birds.mesh.visible) birds.update(time)
     for (const cb of frameCbs) cb(dt, time)
+    draw(dt)
+  }
+  function draw(dt = 0) {
     if (post) post.render(dt)
     else renderer.render(scene, camera)
-    if (adaptive) adapt(raw)
   }
   function adapt(raw: number) {
     // A hidden tab or a one-off hitch says nothing about the GPU: start measuring again.
@@ -238,8 +250,12 @@ export function createWorld(container: HTMLElement, map: GameMap, opts: WorldOpt
     setCleared(tiles) {
       props.setCleared(tiles)
     },
-    focus(tile, animate) {
-      rig.focus(layout.cx[tile], layout.cz[tile], animate)
+    focus(tile, animate, focusOpts) {
+      rig.focus(layout.cx[tile], layout.stand[tile], layout.cz[tile], animate, focusOpts?.zoom)
+    },
+    setViewInsets(insets) {
+      rig.setInsets(insets)
+      draw()
     },
     resize() {
       const w = Math.max(1, container.clientWidth), h = Math.max(1, container.clientHeight)
@@ -248,10 +264,14 @@ export function createWorld(container: HTMLElement, map: GameMap, opts: WorldOpt
       renderer.setSize(w, h)
       renderer.getDrawingBufferSize(drawSize)
       sky.setSize(drawSize.x, drawSize.y)
+      vignette.setSize(drawSize.x, drawSize.y)
+      motes.setSize(drawSize.y)
       post?.setSize(w, h)
       const wasFramed = rig.framed
       rig.resize()
       if (!wasFramed && rig.framed) placeSun()
+      // Resizing clears the canvas; ResizeObserver runs after this frame was drawn, so draw again.
+      draw()
     },
     get quality() {
       return quality
@@ -262,8 +282,9 @@ export function createWorld(container: HTMLElement, map: GameMap, opts: WorldOpt
       perfWarm = 0
       applyQuality()
     },
-    home(animate = true) {
-      rig.home(animate)
+    home(animate = true, homeOpts) {
+      const t = homeOpts?.around
+      rig.home(animate, t === undefined ? undefined : t === null ? null : { x: layout.cx[t], y: layout.stand[t], z: layout.cz[t] })
     },
     dispose() {
       renderer.setAnimationLoop(null)
@@ -274,6 +295,8 @@ export function createWorld(container: HTMLElement, map: GameMap, opts: WorldOpt
       water.dispose()
       props.dispose()
       birds.dispose()
+      motes.dispose()
+      vignette.dispose()
       sky.dispose()
       post?.dispose()
       env?.dispose()
@@ -286,6 +309,7 @@ export function createWorld(container: HTMLElement, map: GameMap, opts: WorldOpt
   }
   Object.defineProperty(world, '__bench', { value: bench })
   Object.defineProperty(world, '__shared', { value: shared })
+  Object.defineProperty(world, '__post', { get: () => post })
   return world
 }
 

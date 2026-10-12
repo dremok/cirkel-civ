@@ -1,5 +1,4 @@
-// A few birds wheeling slowly over the board, flapping and gliding. Their small shadows drift
-// across the land.
+// A few birds wheeling slowly over the board, flapping and gliding.
 
 import * as THREE from 'three'
 import type { Layout } from './layout.ts'
@@ -51,7 +50,8 @@ export function buildBirds(layout: Layout, count: number) {
   depth.onBeforeCompile = inject
   const mesh = new THREE.InstancedMesh(geo, mat, count)
   mesh.customDepthMaterial = depth
-  mesh.castShadow = true
+  // Crisp bird shadows read as dark slashes on the tiles up close: birds cast none.
+  mesh.castShadow = false
   mesh.frustumCulled = false
   mesh.name = 'birds'
 
