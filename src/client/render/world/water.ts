@@ -90,16 +90,19 @@ export function buildWater(layout: Layout) {
 
   // Surface: a flat hexagon per water tile at sea level.
   const pos: number[] = []
+  const tiles: number[] = []
   for (const t of map.tiles) {
     if (!water[t.id]) continue
     const x0 = cx[t.id], z0 = cz[t.id]
     for (let i = 0; i < 6; i++) {
       const a = hexCorner(i), c = hexCorner((i + 1) % 6)
       pos.push(x0, WATER_Y, z0, x0 + c.x, WATER_Y, z0 + c.z, x0 + a.x, WATER_Y, z0 + a.z)
+      tiles.push(t.id, t.id, t.id)
     }
   }
   const sGeo = new THREE.BufferGeometry()
   sGeo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3))
+  sGeo.setAttribute('aTile', new THREE.Float32BufferAttribute(tiles, 1))
   sGeo.setAttribute('normal', new THREE.Float32BufferAttribute(new Float32Array(pos.length).map((_, i) => (i % 3 === 1 ? 1 : 0)), 3))
   sGeo.computeBoundingSphere()
 
@@ -115,6 +118,7 @@ export function buildWater(layout: Layout) {
     new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.06, metalness: 0, transparent: true, depthWrite: false, envMapIntensity: 0.55 }),
     {
       name: 'sea',
+      fog: 'surface',
       extra(shader) {
         Object.assign(shader.uniforms, uniforms)
         shader.fragmentShader = shader.fragmentShader
@@ -212,6 +216,7 @@ export function buildWater(layout: Layout) {
   for (const t of map.tiles) {
     if (!water[t.id]) continue
     const x0 = cx[t.id], z0 = cz[t.id]
+    b.tile = t.id
     for (let i = 0; i < 6; i++) {
       if (nb[t.id * 6 + i] >= 0) continue
       const a = hexCorner(i), c = hexCorner((i + 1) % 6)
@@ -232,6 +237,7 @@ export function buildWater(layout: Layout) {
   // Double-sided: through the surface you see the inside of the far walls, which closes the volume.
   const rMat = patchMaterial(new THREE.MeshStandardMaterial({ vertexColors: true, transparent: true, depthWrite: false, roughness: 0.08, metalness: 0, envMapIntensity: 1.0, side: THREE.DoubleSide }), {
     name: 'rim',
+    fog: 'surface',
     extra(shader) {
       shader.uniforms.uInnerTop = { value: new THREE.Color(BIOME.shallow.light).lerp(new THREE.Color(BIOME.shallow.base), 0.4) }
       shader.uniforms.uInner = { value: new THREE.Color(BIOME.deep.light).lerp(new THREE.Color(BIOME.shallow.dark), 0.4) }

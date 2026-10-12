@@ -9,7 +9,7 @@ import type { WorldQuality } from '../api.ts'
 import { BIOME, NATURE } from '../palette.ts'
 import { lin, mix3 } from './builder.ts'
 import { WATER_Y, hash01, hexSdf, type Layout } from './layout.ts'
-import { patchMaterial, windDepthMaterial } from './shading.ts'
+import { patchFogBasic, patchMaterial, windDepthMaterial } from './shading.ts'
 
 type Kind =
   | 'pine' | 'oak' | 'olive' | 'birch' | 'gold' | 'rust' | 'bush'
@@ -670,24 +670,26 @@ export function buildProps(layout: Layout, quality: WorldQuality): Props {
   const built: THREE.BufferGeometry[] = []
   for (const [kind, props] of placed) {
     const mat = kind === 'blob'
-      ? new THREE.MeshBasicMaterial({
+      ? patchFogBasic(new THREE.MeshBasicMaterial({
         map: blobTex, blending: THREE.MultiplyBlending, premultipliedAlpha: true, transparent: true, depthWrite: false,
         toneMapped: false, fog: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
-      })
+      }))
       : patchMaterial(
         new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85, metalness: 0, side: TWO_SIDED.has(kind) ? THREE.DoubleSide : THREE.FrontSide }),
-        LEAFY.has(kind) ? { wind: WIND[kind], extra: translucency, name: 'leaf' } : { wind: WIND[kind] },
+        LEAFY.has(kind) ? { wind: WIND[kind], extra: translucency, name: 'leaf', fog: 'instanced' } : { wind: WIND[kind], fog: 'instanced' },
       )
     mats.push(mat)
     const geo = geos[kind]()
+    // The tile under each instance (for fog of war), kept in step with the instances in setCleared.
+    geo.setAttribute('aTile', new THREE.InstancedBufferAttribute(new Float32Array(props.length), 1))
     built.push(geo)
     const mesh = new THREE.InstancedMesh(geo, mat, props.length)
     mesh.name = `props-${kind}`
     mesh.castShadow = CASTS.has(kind)
     mesh.receiveShadow = kind !== 'blob'
     if (kind === 'blob') mesh.renderOrder = 0.5
-    if (WIND[kind] > 0 && mesh.castShadow) {
-      const dm = windDepthMaterial(WIND[kind])
+    if (mesh.castShadow) {
+      const dm = windDepthMaterial(WIND[kind], 'instanced')
       mats.push(dm)
       mesh.customDepthMaterial = dm
     }
@@ -698,14 +700,17 @@ export function buildProps(layout: Layout, quality: WorldQuality): Props {
   const setCleared = (tiles: Iterable<number>) => {
     const cleared = new Set(tiles)
     for (const { mesh, props } of meshes) {
+      const tileAttr = mesh.geometry.getAttribute('aTile') as THREE.InstancedBufferAttribute
       let n = 0
       for (const p of props) {
         if (cleared.has(p.tile)) continue
         mesh.setMatrixAt(n, p.m)
         mesh.setColorAt(n, p.c)
+        tileAttr.setX(n, p.tile)
         n++
       }
       mesh.count = n
+      tileAttr.needsUpdate = true
       mesh.instanceMatrix.needsUpdate = true
       if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true
       mesh.computeBoundingSphere()

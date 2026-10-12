@@ -436,9 +436,14 @@ export function bandMaterial(o: {
   glowAlpha: number
   ink?: boolean
   depthFunc?: THREE.DepthModes
+  /** Geometry carries `aVeil`: out-of-sight parts take the world's twilight veil. */
+  veil?: boolean
 }): THREE.ShaderMaterial {
+  const defines: Record<string, string> = {}
+  if (o.ink) defines.INK = ''
+  if (o.veil) defines.VEIL = ''
   const m = new THREE.ShaderMaterial({
-    defines: o.ink ? { INK: '' } : {},
+    defines,
     uniforms: {
       uColor: { value: new THREE.Color(o.color) },
       uGlow: { value: new THREE.Color(o.glow ?? o.color) },
@@ -449,14 +454,24 @@ export function bandMaterial(o: {
     },
     vertexShader: /* glsl */ `
       varying vec2 vUv;
+      #ifdef VEIL
+      attribute float aVeil;
+      varying float vVeil;
+      #endif
       void main() {
         vUv = uv;
+        #ifdef VEIL
+        vVeil = aVeil;
+        #endif
         vec4 mv = modelViewMatrix * vec4(position, 1.0);
         gl_Position = projectionMatrix * mv;
       }`,
     fragmentShader: /* glsl */ `
       uniform vec3 uColor; uniform vec3 uGlow; uniform float uLineFrac; uniform float uLineAlpha; uniform float uGlowAlpha; uniform float opacity;
       varying vec2 vUv;
+      #ifdef VEIL
+      varying float vVeil;
+      #endif
       void main() {
         float y = vUv.y;
         float w = fwidth(y) * 1.1;
@@ -469,6 +484,15 @@ export function bandMaterial(o: {
         g = g * g;
         float a = max(line * uLineAlpha, g * uGlowAlpha);
         vec3 col = mix(uGlow, uColor, line);
+        #ifdef VEIL
+        {
+          float l = dot(col, vec3(0.2126, 0.7152, 0.0722));
+          vec3 v = mix(col, vec3(l), 0.1) * vec3(0.56, 0.61, 1.0);
+          v = mix(v, vec3(0.18, 0.17, 0.37), 0.16);
+          col = mix(col, v, vVeil);
+          a *= 1.0 - 0.2 * vVeil;
+        }
+        #endif
         a *= opacity;
         if (a < 0.003) discard;
         gl_FragColor = vec4(col, a);

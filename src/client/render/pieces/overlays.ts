@@ -14,12 +14,19 @@ import type { CityLayer } from './cities.ts'
 const RIBBON_W = 0.15
 const LIFT = 0.035
 const RED = new THREE.Color(ATTACK_RED)
+/** How much plans fade over unexplored tiles (they lie on the cloud surface there). */
+export const CLOUD_ALPHA = 0.5
 
 interface Flag { cloth: THREE.Mesh; base: Float32Array; phase: number }
 interface Built { group: THREE.Group; decals: Batch; mats: THREE.ShaderMaterial[]; flags: Flag[]; swords: THREE.Sprite[]; labels: Label[] }
 
 /** A smooth ribbon through hex centres, draped over the terrain. */
-function pathGeometry(board: Board, tiles: TileId[], segFade: number[], o: { startTrim: number; endTrim: number; width: number }): THREE.BufferGeometry | null {
+function pathGeometry(
+  board: Board, tiles: TileId[], segFade: number[],
+  o: { startTrim: number; endTrim: number; width: number; topY?: (t: TileId) => number; known?: (t: TileId) => boolean },
+): THREE.BufferGeometry | null {
+  const topY = o.topY ?? ((t: TileId) => board.tops[t].y)
+  const known = o.known ?? (() => true)
   if (tiles.length < 2) return null
   const pts = tiles.map((t) => new THREE.Vector3(board.tops[t].x, 0, board.tops[t].z))
   const curve: THREE.Curve<THREE.Vector3> = pts.length > 2 ? new THREE.CatmullRomCurve3(pts, false, 'centripetal', 0.5) : new THREE.LineCurve3(pts[0], pts[1])
@@ -30,6 +37,7 @@ function pathGeometry(board: Board, tiles: TileId[], segFade: number[], o: { sta
   const S: number[] = []
   const seg: number[] = []
   const H: number[] = []
+  const K: number[] = []
   for (let i = 0; i <= N; i++) {
     const u = i / N
     const p = curve.getPointAt(u)
@@ -37,8 +45,9 @@ function pathGeometry(board: Board, tiles: TileId[], segFade: number[], o: { sta
     S.push(u * total)
     const t = pts.length > 2 ? curve.getUtoTmapping(u, 0) : u
     seg.push(Math.min(tiles.length - 2, Math.floor(t * (tiles.length - 1) + 1e-6)))
-    const tile = board.tileAtXZ(p.x, p.z)
-    H.push(tile !== null ? board.tops[tile].y : board.tops[tiles[Math.min(tiles.length - 1, Math.round(t * (tiles.length - 1)))]].y)
+    const tile = board.tileAtXZ(p.x, p.z) ?? tiles[Math.min(tiles.length - 1, Math.round(t * (tiles.length - 1)))]
+    H.push(topY(tile))
+    K.push(known(tile) ? 1 : CLOUD_ALPHA)
   }
   // drape: rise before an edge (max filter), then smooth
   const k = Math.ceil(0.2 / (total / N))
@@ -79,7 +88,11 @@ function pathGeometry(board: Board, tiles: TileId[], segFade: number[], o: { sta
     pos.push(P[i].x + nx, y, P[i].z + nz, P[i].x - nx, y, P[i].z - nz)
     uv.push(S[i], 0, S[i], 1)
     const edge = Math.min(1, (S[i] - t0) / 0.12, (t1 - S[i]) / 0.1)
-    const f = segFade[seg[i]] * Math.max(0, edge)
+    // fade softly into the clouds: average the cloud factor over a short window
+    let kk = 0
+    let kn = 0
+    for (let j = Math.max(0, i - 4); j <= Math.min(N, i + 4); j++) { kk += K[j]; kn++ }
+    const f = segFade[seg[i]] * Math.max(0, edge) * (kk / kn)
     fade.push(f, f)
     if (rows > 0) {
       const r = (rows - 1) * 2
@@ -104,10 +117,10 @@ export class Overlays {
   private sel: Batch
   private selUnit: number | null = null
   private selCity: number | null = null
-  private selCityMesh: THREE.Mesh | null = null
-  private reach: THREE.Mesh | null = null
+  private selCityMesh: THREE.Object3D | null = null
+  private reach: THREE.Object3D | null = null
   private reachKey = ''
-  private hover: THREE.Mesh | null = null
+  private hover: THREE.Object3D | null = null
   private hoverTile: TileId | null = null
   private previewKey = ''
   private lastPlans: UnitPlan[] = []
@@ -122,6 +135,9 @@ export class Overlays {
   private hoverMat = bandMaterial({ color: '#FFFFFF', glow: '#FFF6E6', lineFrac: 0.04 / 0.16, lineAlpha: 0.95, glowAlpha: 0.32 })
   private selCityMat = bandMaterial({ color: '#FFFFFF', glow: '#FFF6E6', lineFrac: 0.05 / 0.24, lineAlpha: 1, glowAlpha: 0.4 })
   private visible = true
+  /** Fog: explored tiles (null = everything). Over unexplored tiles only my plans are drawn, lying on the clouds. */
+  private explored: Uint8Array | null = null
+  private lastSel: Selection | null = null
 
   constructor(private board: Board, parent: THREE.Object3D, private units: UnitLayer, private cities: CityLayer, private labels: Labels) {
     this.root.name = 'overlays'
@@ -133,6 +149,58 @@ export class Overlays {
     this.sel.alloc()
     this.sel.setExtra('aUv', 0, 0.5, 0, 0.25, 1)
   }
+
+  setFog(fog: { explored: Uint8Array } | null) {
+    const was = this.explored
+    this.explored = fog?.explored ?? null
+    if (was === this.explored || (was && this.explored && was.every((v, i) => v === this.explored![i]))) return
+    // rebuild what depends on it
+    this.reachKey = '~'
+    this.hoverTile = -1
+    this.previewKey = '~'
+    this.rebuildPlans()
+    if (this.lastSel) this.setSelection(this.lastSel)
+  }
+
+  private known = (t: TileId) => !this.explored || this.explored[t] === 1
+
+  /** Outlines on tiles: on known land as usual; over the clouds flat on the cloud surface, with an
+   * x-ray twin so the parts inside the puffs still show softly through the mist. */
+  private outline(tiles: TileId[], o: { inset: number; width: number; line: number; lift: number }, mat: THREE.ShaderMaterial, order: number): THREE.Object3D | null {
+    const group = new THREE.Group()
+    const land = tiles.filter(this.known)
+    const cloud = tiles.filter((t) => !this.known(t))
+    const g1 = land.length ? buildBand(this.board, land, null, { ...o, topY: this.planY }) : null
+    if (g1) group.add(Object.assign(new THREE.Mesh(g1, mat), { renderOrder: order }))
+    const g2 = cloud.length ? buildBand(this.board, cloud, null, { ...o, lift: o.lift + 0.02, topY: this.planY }) : null
+    if (g2) {
+      let xray = this.xrayMats.get(mat)
+      if (!xray) {
+        xray = mat.clone()
+        xray.depthFunc = THREE.GreaterDepth
+        xray.uniforms.opacity = { value: 0.55 }
+        this.xrayMats.set(mat, xray)
+      }
+      // after the cloud sea (which draws at render order 3)
+      group.add(Object.assign(new THREE.Mesh(g2, mat), { renderOrder: 20 + order }), Object.assign(new THREE.Mesh(g2, xray), { renderOrder: 19 + order }))
+    }
+    if (!group.children.length) return null
+    this.root.add(group)
+    return group
+  }
+
+  private xrayMats = new Map<THREE.ShaderMaterial, THREE.ShaderMaterial>()
+
+  private dropOutline(o: THREE.Object3D | null) {
+    if (!o) return
+    o.removeFromParent()
+    const seen = new Set<THREE.BufferGeometry>()
+    o.traverse((x) => { if (x instanceof THREE.Mesh && !seen.has(x.geometry)) { seen.add(x.geometry); x.geometry.dispose() } })
+  }
+
+  /** Height a plan lies at: the tile top as the world reports it, which over unexplored tiles is
+   * the cloud surface (re-read after every fog change). */
+  private planY = (t: TileId) => this.board.tops[t].y
 
   setVisible(v: boolean) {
     this.visible = v
@@ -157,6 +225,7 @@ export class Overlays {
   }
 
   setSelection(sel: Selection) {
+    this.lastSel = sel
     this.selUnit = sel.unit
     this.units.selected = sel.unit
     this.units.hoverTile = sel.hover
@@ -167,47 +236,28 @@ export class Overlays {
     // selected city outline
     if (this.selCity !== sel.city) {
       this.selCity = sel.city
-      this.selCityMesh?.geometry.dispose()
-      this.selCityMesh?.removeFromParent()
+      this.dropOutline(this.selCityMesh)
       this.selCityMesh = null
       const c = sel.city !== null ? this.cities.cities.get(sel.city) : undefined
       if (c) {
-        const g = buildBand(this.board, [c.tile], null, { inset: 0.04, width: 0.24, line: 0.05, lift: 0.03 })
-        if (g) {
-          this.selCityMesh = new THREE.Mesh(g, this.selCityMat)
-          this.selCityMesh.renderOrder = 3
-          this.root.add(this.selCityMesh)
-        }
+        this.selCityMesh = this.outline([c.tile], { inset: 0.04, width: 0.24, line: 0.05, lift: 0.03 }, this.selCityMat, 3)
       }
     }
     // reachable tiles
-    const rk = sel.reachable.join(',')
+    // over the clouds these sit flat on the cloud surface (nothing reveals the heights below)
+    const reachable = sel.reachable
+    const rk = reachable.join(',')
     if (rk !== this.reachKey) {
       this.reachKey = rk
-      this.reach?.geometry.dispose()
-      this.reach?.removeFromParent()
-      this.reach = null
-      const g = sel.reachable.length ? buildBand(this.board, sel.reachable, null, { inset: 0.085, width: 0.2, line: 0.03, lift: 0.02 }) : null
-      if (g) {
-        this.reach = new THREE.Mesh(g, this.reachMat)
-        this.reach.renderOrder = 2
-        this.root.add(this.reach)
-      }
+      this.dropOutline(this.reach)
+      this.reach = this.outline(reachable, { inset: 0.085, width: 0.2, line: 0.03, lift: 0.02 }, this.reachMat, 2)
     }
     // hover
-    if (sel.hover !== this.hoverTile) {
-      this.hoverTile = sel.hover
-      this.hover?.geometry.dispose()
-      this.hover?.removeFromParent()
-      this.hover = null
-      if (sel.hover !== null) {
-        const g = buildBand(this.board, [sel.hover], null, { inset: 0.05, width: 0.16, line: 0.04, lift: 0.025 })
-        if (g) {
-          this.hover = new THREE.Mesh(g, this.hoverMat)
-          this.hover.renderOrder = 3
-          this.root.add(this.hover)
-        }
-      }
+    const hover = sel.hover
+    if (hover !== this.hoverTile) {
+      this.hoverTile = hover
+      this.dropOutline(this.hover)
+      this.hover = hover !== null ? this.outline([hover], { inset: 0.05, width: 0.16, line: 0.04, lift: 0.025 }, this.hoverMat, 3) : null
     }
     // preview path (ghost)
     const pk = sel.preview && sel.unit !== null ? `${sel.unit}:${sel.preview.kind}:${sel.preview.steps.map((s) => `${s.tile}.${s.turn}.${s.tick}`).join(',')}` : ''
@@ -228,7 +278,8 @@ export class Overlays {
       const slot = decals.alloc()
       if (slot < 0) return
       const t = this.board.tops[tile]
-      this.m.compose(this.v.set(t.x, t.y + lift, t.z), this.q.identity(), this.s.set(size, 1, size))
+      if (!this.known(tile)) alpha *= CLOUD_ALPHA
+      this.m.compose(this.v.set(t.x, this.planY(tile) + lift, t.z), this.q.identity(), this.s.set(size, 1, size))
       decals.setMatrix(slot, this.m)
       decals.setColor(slot, color)
       decals.setExtra('aAlpha', slot, alpha)
@@ -239,14 +290,14 @@ export class Overlays {
       if (!vis) continue
       const tc = teamColors(vis.colorIdx)
       const endTile = plan.steps.length ? plan.steps[plan.steps.length - 1].tile : vis.tile
-      if (plan.target !== undefined && plan.target !== null && plan.target !== endTile) this.volleyTarget(built, endTile, plan.target, ghost)
+      if (plan.target !== undefined && plan.target !== null && plan.target !== endTile && this.known(plan.target)) this.volleyTarget(built, endTile, plan.target, ghost)
       if (!plan.steps.length) continue
       const tiles = [vis.tile, ...plan.steps.map((s) => s.tile)]
       const later = (turn: number) => (turn > 0 ? 0.32 : 1)
       const fades = plan.steps.map((s) => later(s.turn) * (ghost ? 0.85 : 1))
       const last = plan.steps[plan.steps.length - 1]
       const endTrim = plan.kind === 'attack' ? 0.42 : plan.kind === 'found' ? 0.12 : 0.36
-      const geo = pathGeometry(this.board, tiles, fades, { startTrim: 0.34, endTrim, width: RIBBON_W })
+      const geo = pathGeometry(this.board, tiles, fades, { startTrim: 0.34, endTrim, width: RIBBON_W, topY: this.planY, known: this.known })
       if (geo) {
         const mat = ribbonMaterial({ color: tc.base, opacity: ghost ? 0.85 : 1, width: RIBBON_W })
         mat.side = THREE.DoubleSide
@@ -274,7 +325,7 @@ export class Overlays {
         const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: swordsTexture(ATTACK_RED), transparent: true, depthWrite: false, opacity: alpha }))
         sp.scale.setScalar(0.5)
         const t = this.board.tops[last.tile]
-        const y = t.y + (this.units.unitAt(last.tile) ? 1.12 : 0.62)
+        const y = this.planY(last.tile) + (this.units.unitAt(last.tile) ? 1.12 : 0.62)
         sp.position.set(t.x, y, t.z)
         sp.renderOrder = 12
         sp.userData.y = y
@@ -357,14 +408,15 @@ export class Overlays {
     el.textContent = String(tick)
     const t = this.board.tops[tile]
     // the end numeral sits at the near edge of the ring so it never hides the unit standing there
-    const at = new THREE.Vector3(t.x, t.y + LIFT, t.z)
+    const at = new THREE.Vector3(t.x, this.planY(tile) + LIFT, t.z)
+    if (!this.known(tile)) el.style.opacity = '0.7'
     b.labels.push(this.labels.add(el, at, { toward: end ? this.board.R * 0.46 : 0, zoom: 'float' }))
   }
 
   private flag(b: Built, tile: TileId, color: THREE.Color, alpha: number) {
     const t = this.board.tops[tile]
     const g = new THREE.Group()
-    g.position.set(t.x, t.y, t.z)
+    g.position.set(t.x, this.planY(tile), t.z)
     const pole = new THREE.Mesh(this.poleGeo, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.7, transparent: alpha < 1, opacity: alpha }))
     pole.castShadow = true
     const clothGeo = new THREE.PlaneGeometry(0.26, 0.16, 10, 3)
@@ -425,14 +477,18 @@ export class Overlays {
       this.sel.setMatrix(0, this.m.makeScale(0, 0, 0))
     }
     this.sel.commit()
-    if (this.selCityMesh) this.selCityMat.uniforms.opacity.value = 0.8 + 0.2 * Math.sin(time * 3.1)
+    if (this.selCityMesh) {
+      this.selCityMat.uniforms.opacity.value = 0.8 + 0.2 * Math.sin(time * 3.1)
+      const x = this.xrayMats.get(this.selCityMat)
+      if (x) x.uniforms.opacity.value = 0.45 + 0.1 * Math.sin(time * 3.1)
+    }
   }
 
   dispose() {
     if (this.plans) this.drop(this.plans)
     if (this.preview) this.drop(this.preview)
     this.sel.dispose()
-    for (const m of [this.reach, this.hover, this.selCityMesh]) m?.geometry.dispose()
+    for (const m of [this.reach, this.hover, this.selCityMesh]) this.dropOutline(m)
     this.root.removeFromParent()
   }
 }

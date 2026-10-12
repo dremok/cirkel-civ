@@ -7,7 +7,7 @@ import type { Biome } from '../../../engine/types.ts'
 import { BIOME, FLAVOURS } from '../palette.ts'
 import { GeoBuilder, lin, mix3, scale3, type Vec } from './builder.ts'
 import { BEVEL_DROP, BEVEL_IN, BOTTOM_Y, WATER_Y, hash01, type Layout } from './layout.ts'
-import { patchMaterial } from './shading.ts'
+import { FOG_FLOOR, patchMaterial, windDepthMaterial } from './shading.ts'
 
 type RGB = [number, number, number]
 
@@ -111,9 +111,13 @@ function sideColor(biome: Biome, top: number, y: number, jitter: number, turf: R
   } else if (y > -1.15) {
     return scale3(C.rockB, 0.85)
   }
-  // World-height geology: the same layers line up across neighbouring columns.
+  return geology(y, jitter, biome === 'mountain' || biome === 'snow')
+}
+
+/** World-height geology: the same layers line up across neighbouring columns. */
+function geology(y: number, jitter: number, high = false): RGB {
   const yy = y + jitter
-  if (yy > 0.85) return biome === 'mountain' || biome === 'snow' ? C.high : mix3(C.rockA, C.earth, 0.3)
+  if (yy > 0.85) return high ? C.high : mix3(C.rockA, C.earth, 0.3)
   if (yy > 0.2) return mix3(C.rockA, C.rust, 0.35)
   if (yy > -0.5) return C.rust
   if (yy > -1.15) return C.rockA
@@ -154,6 +158,7 @@ export function buildTerrain(layout: Layout): { mesh: THREE.Mesh; dispose(): voi
     }
     const turf = turfSide(layout, id)
     b.detail = DETAIL[t.biome]
+    b.tile = id
 
     // Height of each neighbour's top above ours (for baked occlusion).
     const up = new Float32Array(6)
@@ -207,6 +212,8 @@ export function buildTerrain(layout: Layout): { mesh: THREE.Mesh; dispose(): voi
       if (yTop - yBot < 0.002) continue
       const a = hexCorner(i)
       const c = hexCorner((i + 1) % 6)
+      b.across = o
+      b.lowY = yBot
       const jitter = (hash01(id, 10 + i) - 0.5) * 0.05
       // Band cuts in this face's span.
       const cuts = new Set<number>([yTop, yBot])
@@ -241,10 +248,13 @@ export function buildTerrain(layout: Layout): { mesh: THREE.Mesh; dispose(): voi
       }
     }
 
+    b.across = -1
+    b.lowY = NaN
     if (t.biome === 'mountain' || t.biome === 'snow') addCrags(b, layout, id)
   }
 
   // The underside, so the board reads as a solid object from low angles.
+  b.tile = -1 // the underside never moves
   for (const t of map.tiles) {
     const x0 = cx[t.id], z0 = cz[t.id]
     for (let i = 0; i < 6; i++) {
@@ -254,12 +264,43 @@ export function buildTerrain(layout: Layout): { mesh: THREE.Mesh; dispose(): voi
   }
 
   const geo = b.build()
-  const mat = patchMaterial(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.92, metalness: 0, envMapIntensity: 1 }), { topDetail: true, caustics: true })
+  const mat = patchMaterial(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.92, metalness: 0, envMapIntensity: 1 }), { topDetail: true, caustics: true, fog: 'terrain' })
+  const depth = windDepthMaterial(0, 'terrain')
   const mesh = new THREE.Mesh(geo, mat)
+  mesh.customDepthMaterial = depth
   mesh.castShadow = true
   mesh.receiveShadow = true
   mesh.name = 'terrain'
-  return { mesh, dispose() { geo.dispose(); mat.dispose() } }
+  // Fog of war: under unexplored land the board's edge shows plain rock from the cloud floor down
+  // (the deep layers are the same everywhere), so the diorama keeps its shape and tells nothing.
+  const sk = new GeoBuilder()
+  for (const t of map.tiles) {
+    const x0 = cx[t.id], z0 = cz[t.id]
+    sk.tile = t.id
+    for (let i = 0; i < 6; i++) {
+      if (nb[t.id * 6 + i] >= 0) continue
+      const a = hexCorner(i), c = hexCorner((i + 1) % 6)
+      const ys = [FOG_FLOOR, ...STRATA_CUTS.filter((y) => y < FOG_FLOOR - 0.004 && y > BOTTOM_Y + 0.004), BOTTOM_Y]
+      for (let k = 0; k < ys.length - 1; k++) {
+        const hi = ys[k], lo = ys[k + 1]
+        const bc = geology((hi + lo) / 2, 0)
+        const shade = (y: number) => (1 - 0.18 * Math.max(0, 1 - (y - BOTTOM_Y) / 0.5)) * (y > FOG_FLOOR - 0.03 ? 1.04 : 1)
+        sk.quad(
+          [x0 + a.x, hi, z0 + a.z], [x0 + c.x, hi, z0 + c.z], [x0 + c.x, lo, z0 + c.z], [x0 + a.x, lo, z0 + a.z],
+          scale3(bc, shade(hi)), scale3(bc, shade(hi)), scale3(bc, shade(lo)), scale3(bc, shade(lo)),
+        )
+      }
+    }
+  }
+  const skGeo = sk.build()
+  // Pushed back in depth so a real column rising in its place always wins over it.
+  const skMat = patchMaterial(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.92, metalness: 0, polygonOffset: true, polygonOffsetFactor: 2, polygonOffsetUnits: 2 }), { fog: 'skirt' })
+  const skirt = new THREE.Mesh(skGeo, skMat)
+  skirt.receiveShadow = true
+  skirt.name = 'fog-skirt'
+  mesh.add(skirt)
+
+  return { mesh, dispose() { geo.dispose(); mat.dispose(); depth.dispose(); skGeo.dispose(); skMat.dispose() } }
 }
 
 /** Irregular low-poly rock spires on a mountain column; snow tiles get snow caps. */

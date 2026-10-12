@@ -34,14 +34,21 @@ export class Territory {
   }
 
   /** Rebuild if the city set changed; `animate` crossfades from the old borders. */
-  set(cities: TerritoryCity[], animate: boolean): void {
-    const key = cities.map((c) => `${c.id}:${c.owner}:${c.colorIdx}:${c.tile}`).sort().join('|')
+  set(cities: TerritoryCity[], animate: boolean, explored: Uint8Array | null = null, visible: Uint8Array | null = null): void {
+    const owners = this.owners(cities)
+    // under fog only explored tiles carry borders (nothing may draw over the cloud sea)
+    let fogKey = ''
+    if (explored) {
+      let h = 0
+      owners.forEach((c, t) => { if (c && explored[t]) h = (h * 31 + t + 1 + (visible && visible[t] ? 7919 : 0)) | 0 })
+      fogKey = String(h)
+    }
+    const key = cities.map((c) => `${c.id}:${c.owner}:${c.colorIdx}:${c.tile}`).sort().join('|') + '#' + fogKey
     if (key === this.key) return
     this.key = key
-    const owners = this.owners(cities)
     const byOwner = new Map<PlayerId, { tiles: TileId[]; colorIdx: number }>()
     owners.forEach((c, t) => {
-      if (!c) return
+      if (!c || (explored && !explored[t])) return
       let e = byOwner.get(c.owner)
       if (!e) byOwner.set(c.owner, (e = { tiles: [], colorIdx: c.colorIdx }))
       e.tiles.push(t)
@@ -51,19 +58,21 @@ export class Territory {
     const mats: THREE.ShaderMaterial[] = []
     for (const [owner, { tiles, colorIdx }] of byOwner) {
       const tc = teamColors(colorIdx)
+      // an unexplored neighbour of the same owner is still inside (no false border along the clouds)
       const inRegion = (t: TileId) => owners[t]?.owner === owner
-      const band = buildBand(this.board, tiles, inRegion, { inset: 0.075, width: 0.42, line: 0.068, lift: 0.014 })
+      const veil = (t: TileId) => (visible && !visible[t] ? 1 : 0)
+      const band = buildBand(this.board, tiles, inRegion, { inset: 0.075, width: 0.42, line: 0.068, lift: 0.014, allowed: explored, veil })
       if (band) {
-        const mat = bandMaterial({ color: tc.dark.clone().lerp(tc.base, 0.55), glow: tc.base, lineFrac: 0.068 / 0.42, lineAlpha: 0.94, glowAlpha: 0.2, ink: true })
+        const mat = bandMaterial({ color: tc.dark.clone().lerp(tc.base, 0.55), glow: tc.base, lineFrac: 0.068 / 0.42, lineAlpha: 0.94, glowAlpha: 0.2, ink: true, veil: true })
         mat.side = THREE.DoubleSide
         const mesh = new THREE.Mesh(band, mat)
         mesh.renderOrder = 1
         group.add(mesh)
         mats.push(mat)
       }
-      const fill = buildFill(this.board, tiles, 0.0, 0.01)
+      const fill = buildFill(this.board, tiles, 0.0, 0.01, veil)
       if (fill) {
-        const mat = bandMaterial({ color: tc.base, lineFrac: 0, lineAlpha: 0, glowAlpha: 0.055 })
+        const mat = bandMaterial({ color: tc.base, lineFrac: 0, lineAlpha: 0, glowAlpha: 0.055, veil: true })
         mat.side = THREE.DoubleSide
         const mesh = new THREE.Mesh(fill, mat)
         mesh.renderOrder = 0

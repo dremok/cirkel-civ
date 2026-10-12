@@ -1,10 +1,11 @@
 // GameView: units, cities, territory, overlays and the replay of a resolved turn, on top of the
 // World. See ART.md ("Pieces") for the look and api.ts for the contract.
 import * as THREE from 'three'
-import type { GameState, PlayerId, TileId } from '../../engine/types.ts'
+import type { City, GameState, PlayerId, TileId, Unit } from '../../engine/types.ts'
 import type { CreateGameView, GameView, Selection, UnitPlan } from './api.ts'
 import { CityLayer, PLAZA_Y } from './pieces/cities.ts'
 import { colorIndexOf, makeBoard } from './pieces/common.ts'
+import { type FogView, fogFor, sameMask, visibleFor } from './pieces/fog.ts'
 import { Fx } from './pieces/fx.ts'
 import { flutterTime } from './pieces/kit.ts'
 import { Labels } from './pieces/labels.ts'
@@ -52,11 +53,37 @@ export const createGameView: CreateGameView = (container, map, handlers) => {
   let pending: { state: GameState; me: PlayerId | null } | null = null
   const debug: GameViewDebug & { layers?: unknown } = { timeScale: 1, seek() {}, time: () => playback?.tl.t ?? -1, frameMs: 0 }
 
+  // Fog of war: what `me` has explored and sees (null = no fog). Cached per state object.
+  let fogView: FogView | null = null
+  let fogCache: { state: GameState; who: PlayerId | null; fog: FogView | null } | null = null
+  const fogOf = (state: GameState, who: PlayerId | null): FogView | null => {
+    if (fogCache && fogCache.state === state && fogCache.who === who) return fogCache.fog
+    const fog = fogFor(state, who)
+    fogCache = { state, who, fog }
+    return fog
+  }
+  const showFog = (fog: FogView | null, animate: boolean) => {
+    const same = fog && fogView ? sameMask(fog.explored, fogView.explored) && sameMask(fog.visible, fogView.visible) : fog === fogView
+    fogView = fog
+    if (!same) {
+      world.setFog?.(fog ? { explored: fog.explored, visible: fog.visible } : null, { animate })
+      // tile tops follow the fog (clouded tiles: the cloud surface), so never keep stale ones
+      board.refreshTops()
+    }
+    overlays.setFog(fog)
+  }
+  /** Rival cities whose tile is out of sight are shown from memory. */
+  const showMemory = (animate: boolean) => {
+    const ids = new Set<number>()
+    if (fogView) for (const c of cities.cities.values()) if (c.owner !== me && !fogView.visible[c.tile]) ids.add(c.id)
+    cities.setMemory(ids, animate)
+  }
+
   const territoryFromCities = (animate: boolean) => {
     const list: TerritoryCity[] = [...cities.cities.values()].map((c) => ({
       id: c.id, owner: c.owner, colorIdx: c.colorIdx, tile: c.tile, founded: current?.cities.find((x) => x.id === c.id)?.founded ?? c.id,
     }))
-    territory.set(list, animate)
+    territory.set(list, animate, fogView?.explored ?? null, fogView?.visible ?? null)
     updateCleared(list.map((c) => c.tile))
   }
 
@@ -72,9 +99,11 @@ export const createGameView: CreateGameView = (container, map, handlers) => {
   const apply = (state: GameState, who: PlayerId | null) => {
     current = state
     me = who
+    showFog(fogOf(state, who), false)
     units.sync(state)
     cities.sync(state)
-    territory.set(state.cities.map((c) => ({ id: c.id, owner: c.owner, colorIdx: colorIndexOf(state, c.owner), tile: c.tile, founded: c.founded })), false)
+    showMemory(false)
+    territory.set(state.cities.map((c) => ({ id: c.id, owner: c.owner, colorIdx: colorIndexOf(state, c.owner), tile: c.tile, founded: c.founded })), false, fogView?.explored ?? null, fogView?.visible ?? null)
     updateCleared(state.cities.map((c) => c.tile))
     overlays.refresh()
   }
@@ -222,8 +251,19 @@ export const createGameView: CreateGameView = (container, map, handlers) => {
       if (playback) finishPlayback(true)
       apply(prev, me)
       overlays.setVisible(false)
+      const startFog = fogView
+      const viewer = me
+      const fog = startFog && viewer !== null ? {
+        explored: startFog.explored.slice(),
+        visibleAt: (u: Unit[], c: City[]) => visibleFor({ ...prev, units: u, cities: c }, viewer),
+        show(explored: Uint8Array, visible: Uint8Array) {
+          showFog({ explored: explored.slice(), visible: visible.slice() }, true)
+          showMemory(true)
+          territoryFromCities(true)
+        },
+      } : null
       const tl = buildReplay(
-        { board, units, cities, fx, labels, territory: territoryFromCities },
+        { board, units, cities, fx, labels, territory: territoryFromCities, me: viewer, fog },
         prev, events, next, opts?.speed ?? 0.5, opts?.onTick,
       )
       return new Promise<void>((resolve) => {

@@ -3,7 +3,7 @@
 // waits for the attack before it). About 0.5 s per tick at speed 1.
 import * as THREE from 'three'
 import { UNIT_MAX_HP } from '../../../engine/config.ts'
-import type { City, GameEvent, GameState, Target, Tick, TileId, UnitId } from '../../../engine/types.ts'
+import type { City, GameEvent, GameState, PlayerId, Target, Tick, TileId, Unit, UnitId } from '../../../engine/types.ts'
 import {
   type Board, angleDelta, clamp01, colorIndexOf, easeInCubic, easeInOutCubic, easeOutBack, easeOutCubic, lerp, smoothstep, teamColors,
 } from './common.ts'
@@ -79,7 +79,22 @@ export interface ReplayDeps {
   labels: Labels
   /** Territory refresh from the cities as currently displayed. */
   territory(animate: boolean): void
+  /** The player watching (their units and cities give sight). */
+  me?: PlayerId | null
+  /** Fog of war, or null when the game has none. */
+  fog?: ReplayFog | null
 }
+
+export interface ReplayFog {
+  /** Explored tiles at the start of the turn (a copy the replay may grow). */
+  explored: Uint8Array
+  /** What `me` sees with these units and cities. */
+  visibleAt(units: Unit[], cities: City[]): Uint8Array
+  /** Show the fog (animated). */
+  show(explored: Uint8Array, visible: Uint8Array): void
+}
+
+const MIST = new THREE.Color('#F2E8F0')
 
 const IMPACT = new THREE.Color('#FFF6E4')
 
@@ -115,6 +130,22 @@ export function buildReplay(d: ReplayDeps, prev: GameState, events: GameEvent[],
   const shownCity = new Map<number, City>()
   for (const c of prev.cities) shownCity.set(c.id, structuredClone(c))
   const nextCity = (id: number) => next.cities.find((c) => c.id === id)
+
+  // fog: who owns what, my units and cities as they stand logically, and the explored set
+  const me = d.me ?? null
+  const fog = d.fog ?? null
+  const ownerOf = new Map<UnitId, PlayerId>()
+  for (const u of prev.units) ownerOf.set(u.id, u.owner)
+  for (const e of events) if (e.kind === 'spawn' || e.kind === 'spotted') ownerOf.set(e.unit.id, e.unit.owner)
+  const mineUnits = new Map<UnitId, Unit>()
+  for (const u of prev.units) if (u.owner === me) mineUnits.set(u.id, u)
+  const mineCities: City[] = prev.cities.filter((c) => c.owner === me)
+  const explored = fog ? fog.explored.slice() : null
+  let fogDirty = false
+  const isMine = (id: UnitId) => me !== null && ownerOf.get(id) === me
+  // the latest spotted/lost track per unit wins (a unit may be lost and spotted again)
+  const liveGen = new Map<UnitId, number>()
+  let genSeq = 0
 
   const at = (id: UnitId) => free.get(id) ?? 0
   const busy = (id: UnitId, t: number) => free.set(id, Math.max(at(id), t))
@@ -246,6 +277,7 @@ export function buildReplay(d: ReplayDeps, prev: GameState, events: GameEvent[],
           const from = e.from
           const to = e.to
           tileOf.set(e.unit, to)
+          if (isMine(e.unit)) fogDirty = true
           let p0 = new THREE.Vector3()
           const p1 = new THREE.Vector3()
           let yaw0 = 0
@@ -513,6 +545,7 @@ export function buildReplay(d: ReplayDeps, prev: GameState, events: GameEvent[],
           tl.add({ start: start + tip, dur: 0, fx: true, begin: () => fx.dust(home.clone().addScaledVector(dir, 0.35), 8, 0.24) })
           free.set(e.unit, Infinity)
           tileOf.delete(e.unit)
+          if (isMine(e.unit)) { mineUnits.delete(e.unit); fogDirty = true }
           break
         }
         case 'capture': {
@@ -537,6 +570,7 @@ export function buildReplay(d: ReplayDeps, prev: GameState, events: GameEvent[],
           const start = Math.max(S, at(e.unit))
           const city = e.city
           shownCity.set(city.id, structuredClone(city))
+          if (city.owner === me) { mineCities.push(city); mineUnits.delete(e.unit); fogDirty = true }
           const ci = colorOf(city.owner)
           tl.add({
             start, dur: 0.32 * k,
@@ -581,6 +615,8 @@ export function buildReplay(d: ReplayDeps, prev: GameState, events: GameEvent[],
         }
         case 'spawn': {
           const u = e.unit
+          tileOf.set(u.id, u.tile)
+          if (u.owner === me) { mineUnits.set(u.id, u); fogDirty = true }
           const start = S + 0.05 * k
           tl.add({
             start, dur: 0.5 * k,
@@ -636,6 +672,69 @@ export function buildReplay(d: ReplayDeps, prev: GameState, events: GameEvent[],
           blockEnd = Math.max(blockEnd, S + 0.9 * k)
           break
         }
+        case 'spotted': {
+          // an enemy comes into sight: it condenses out of the mist where it was seen
+          const u = e.unit
+          const g = ++genSeq
+          tileOf.set(u.id, u.tile)
+          hpOf.set(u.id, u.hp)
+          // just after the clouds over its tile begin to part (the fog refresh early in the tick)
+          const start = Math.max(S + 0.42 * k, at(u.id) === Infinity ? S : at(u.id))
+          tl.add({
+            start, dur: 0.4 * k,
+            begin() {
+              liveGen.set(u.id, g)
+              let v = units.get(u.id)
+              if (!v) v = units.create(u, colorOf(u.owner))
+              else { units.place(v, u.tile); v.hp = u.hp }
+              v.fade = 0
+              v.dirty = true
+              fx.dust(v.pos, 6, 0.3, MIST)
+            },
+            update(p) {
+              if (liveGen.get(u.id) !== g) return
+              const v = units.get(u.id)
+              if (!v) return
+              v.fade = easeOutCubic(p)
+              v.dirty = true
+            },
+          })
+          free.set(u.id, start + 0.28 * k)
+          break
+        }
+        case 'lost': {
+          // an enemy slips out of sight: it dissolves into the mist at that tile
+          const id = e.unit
+          const g = ++genSeq
+          const start = Math.max(S, at(id) === Infinity ? S : at(id))
+          tl.add({
+            start, dur: 0.45 * k,
+            begin() {
+              liveGen.set(id, g)
+              const v = units.get(id)
+              if (v) fx.dust(v.pos, 6, 0.3, MIST)
+            },
+            update(p) {
+              if (liveGen.get(id) !== g) return
+              const v = units.get(id)
+              if (!v) return
+              v.fade = 1 - easeInCubic(p)
+              v.deco01 = 1 - p
+              v.dirty = true
+            },
+            end() {
+              if (liveGen.get(id) === g) units.remove(id)
+            },
+          })
+          tileOf.delete(id)
+          free.set(id, Infinity)
+          break
+        }
+        case 'explore': {
+          if (explored) for (const t of e.tiles) explored[t] = 1
+          fogDirty = true
+          break
+        }
         case 'cityRepair': {
           const c = shownCity.get(e.city)
           if (c) c.hp = e.hp
@@ -666,6 +765,18 @@ export function buildReplay(d: ReplayDeps, prev: GameState, events: GameEvent[],
         default:
           break
       }
+    }
+    if (fog && explored && fogDirty) {
+      fogDirty = false
+      const mine = [...mineUnits.values()].flatMap((u) => {
+        const t = tileOf.get(u.id)
+        return t === undefined ? [] : [{ ...u, tile: t }]
+      })
+      const visible = fog.visibleAt(mine, mineCities)
+      for (let i = 0; i < explored.length; i++) if (visible[i]) explored[i] = 1
+      const ex = explored.slice()
+      // early in the tick so the clouds part as the units set out (cosmetic: a skip lands on the final state)
+      tl.add({ start: tickStart + 0.1 * k, dur: 0, fx: true, begin: () => fog.show(ex, visible) })
     }
     S = Math.max(tickStart + (tick <= 6 ? 0.5 * k : 0.3 * k), blockEnd)
   }

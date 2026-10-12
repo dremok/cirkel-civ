@@ -12,9 +12,13 @@ export interface World {
   readonly scene: THREE.Scene
   readonly camera: THREE.PerspectiveCamera
   readonly map: GameMap
-  /** Top centre of a tile in world space: where a piece stands. */
+  /** Top centre of a tile in world space: where a piece stands. Fog-aware: for a tile that is
+   * unexplored under the current setFog it returns a point on the flat cloud surface (the same
+   * height for every clouded tile, lying on top of the cloud sea), so nothing drawn there reveals
+   * the hidden land; otherwise the real top. Re-read it after each setFog. */
   tileTop(tile: TileId): THREE.Vector3
-  /** Tile under a client-space point (e.g. a pointer event), or null. */
+  /** Tile under a client-space point (e.g. a pointer event), or null. Clouded tiles are picked by
+   * the flat cloud surface, never by the hidden columns. */
   pick(clientX: number, clientY: number): TileId | null
   /** Register a per-frame callback (dt and elapsed time in seconds), called before rendering. Returns an unsubscribe. */
   onFrame(cb: (dt: number, time: number) => void): () => void

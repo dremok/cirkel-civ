@@ -7,8 +7,16 @@ export class GeoBuilder {
   nor: number[] = []
   col: number[] = []
   det: number[] = []
+  tl: number[] = []
+  nbr: number[] = []
+  low: number[] = []
   /** Surface kind stamped on the vertices emitted next (see the terrain shader's top detail). */
   detail = 0
+  /** For fog of war: the tile the next vertices belong to, the tile across a side face (or -1), and
+   * the height of that face's lower edge (vertices there are flagged so the shader can move them). */
+  tile = -1
+  across = -1
+  lowY = NaN
   readonly alpha: boolean
 
   constructor(alpha = false) {
@@ -19,6 +27,9 @@ export class GeoBuilder {
     this.pos.push(x, y, z)
     this.nor.push(nx, ny, nz)
     this.det.push(this.detail)
+    this.tl.push(this.tile)
+    this.nbr.push(this.across)
+    this.low.push(Math.abs(y - this.lowY) < 1e-5 ? 1 : 0)
     if (this.alpha) this.col.push(c[0], c[1], c[2], c.length > 3 ? c[3] : 1)
     else this.col.push(c[0], c[1], c[2])
   }
@@ -52,6 +63,11 @@ export class GeoBuilder {
     g.setAttribute('normal', new THREE.Float32BufferAttribute(this.nor, 3))
     g.setAttribute('color', new THREE.Float32BufferAttribute(this.col, this.alpha ? 4 : 3))
     if (this.det.some((d) => d !== 0)) g.setAttribute('aDetail', new THREE.Float32BufferAttribute(this.det, 1))
+    if (this.tl.some((t) => t >= 0)) {
+      g.setAttribute('aTile', new THREE.Float32BufferAttribute(this.tl, 1))
+      g.setAttribute('aNb', new THREE.Float32BufferAttribute(this.nbr, 1))
+      g.setAttribute('aLow', new THREE.Float32BufferAttribute(this.low, 1))
+    }
     g.computeBoundingSphere()
     g.computeBoundingBox()
     return g

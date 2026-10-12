@@ -11,6 +11,8 @@ import {
 import { type BuildingType, type CityInterior, PLOTS, canPlace, newInterior } from '../../engine/city.ts'
 import type { PlanStep, UnitPlan } from '../render/api.ts'
 import { createGameView } from '../render/index.ts'
+import { exploredOf, observe, observeEvents, tilesInRange } from '../../engine/index.ts'
+import { citySnapshot, encodeExplored, initialFog } from '../../engine/vision.ts'
 
 const q = new URLSearchParams(location.search)
 const seats = Number(q.get('seats') ?? 2)
@@ -18,6 +20,7 @@ const NAMES = ['Anna', 'Lars', 'Sara', 'Olle']
 let state: GameState = createGame({
   seed: q.get('seed') ?? 'aurora',
   players: NAMES.slice(0, seats).map((name, i) => ({ name, kind: i === 0 ? 'human' : 'bot' })),
+  fog: q.has('fog'),
 })
 const map = state.map
 const ME = 0
@@ -139,7 +142,7 @@ if (q.get('towns') !== '0') {
 capA.pop = Number(q.get('capPop') ?? 6)
 capB.interior = sampleInterior(capB)
 // the first capital and the raided town show the plan derived from population (no interior)
-for (const c of [capA, town]) delete (c as Partial<City>).interior
+if (!q.has('fog')) for (const c of [capA, town]) delete (c as Partial<City>).interior
 
 // extra seats get a few pieces too
 for (const c of state.cities.filter((c) => c.owner >= 2)) {
@@ -261,7 +264,21 @@ const view = createGameView(document.getElementById('app')!, map, {
   onTileHover(tile) { hovers.push(tile); hover = tile; refreshSelection() },
 })
 addEventListener('resize', () => view.resize())
-view.setState(state, ME)
+// &fog=1: fresh memories for the staged scene, a ring of explored-but-unseen land around my
+// pieces, and the raided rival town remembered as last seen
+const FOG = q.has('fog')
+if (FOG) {
+  state.fog = initialFog(state)
+  const mem = state.fog[ME]
+  const ex = exploredOf(state, ME)
+  const R = Number(q.get('explore') ?? 4)
+  for (const u of state.units) if (u.owner === ME) for (const t of tilesInRange(map, u.tile, R)) ex[t] = 1
+  for (const c of state.cities) if (c.owner === ME) for (const t of tilesInRange(map, c.tile, R + 1)) ex[t] = 1
+  mem.explored = encodeExplored(ex)
+  for (const c of state.cities) if (c.owner !== ME && ex[c.tile] && !mem.cities.some((m) => m.id === c.id)) mem.cities.push(citySnapshot(c))
+}
+const shown = (s: GameState) => (FOG ? observe(s, ME) : s)
+view.setState(shown(state), ME)
 
 let selected: number | null = null
 let hover: TileId | null = null
@@ -357,8 +374,13 @@ async function playReal() {
   const all: Record<number, PlayerOrders> = {}
   for (const p of state.players) all[p.id] = botOrders(state, p.id, state.turn)
   const res = resolveTurn(state, all)
-  log(`real turn ${state.turn}: ${res.events.length} events\n${summarize(res.events)}`)
-  await view.playEvents(state, res.events, res.state, { onTick: (t) => log(`tick ${t}`) })
+  const seen = FOG ? observeEvents(state, res.events, ME) : res.events
+  log(`real turn ${state.turn}: ${seen.length} events\n${summarize(seen)}`)
+  const ticks: string[] = []
+  const fogEvents = seen.filter((e) => e.kind === 'spotted' || e.kind === 'lost').map((e) => `${e.kind}@t${e.t}:${e.kind === 'spotted' ? e.unit.id + '@' + e.unit.tile : e.unit + '@' + e.tile}`)
+  await view.playEvents(shown(state), seen, shown(res.state), {
+    onTick: (t) => { ticks.push(`${t}@${debug.time().toFixed(2)}`); log(`tick ${t}\n${summarize(seen)}\n${fogEvents.join(' ')}\n${ticks.join(' ')}`) },
+  })
   state = res.state
   orders.clear()
   pushPlans()
@@ -414,4 +436,4 @@ function screenOf(tile: TileId, lift = 0) {
 }
 const roles = { rider: a3.id, spear: a2.id, settler: mySettler.id, archer: myArcher.id, clash: a1.id }
 
-Object.assign(window, { view, state: () => state, debug, playScripted, playReal, clicks, hovers, screenOf, roles, selected: () => selected })
+Object.assign(window, { view, state: () => state, shown: () => shown(state), debug, playScripted, playReal, clicks, hovers, screenOf, roles, selected: () => selected })

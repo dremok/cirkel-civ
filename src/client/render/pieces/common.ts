@@ -14,8 +14,10 @@ export const EDGE_DIRS: readonly [number, number][] = [[1, 0], [0, 1], [-1, 1], 
 /** Board geometry in world units, derived from the World so it follows whatever the world does. */
 export interface Board {
   readonly map: GameMap
-  /** Top centre of every tile (where pieces stand). */
+  /** Top centre of every tile (where pieces stand). Fog-aware once the world is: re-read with `refreshTops`. */
   readonly tops: THREE.Vector3[]
+  /** Re-read every tile top from the world, in place (after each fog change: clouded tiles sit at the cloud surface). */
+  refreshTops(): void
   /** Hex circumradius in world units. */
   readonly R: number
   tileAtXZ(x: number, z: number): TileId | null
@@ -53,6 +55,9 @@ export function makeBoard(world: World): Board {
   }
   return {
     map, tops, R, tileAtXZ,
+    refreshTops() {
+      for (let i = 0; i < tops.length; i++) tops[i].copy(world.tileTop(i))
+    },
     corner(tile, i, out = new THREE.Vector3()) {
       const ang = (Math.PI / 180) * (60 * (((i % 6) + 6) % 6) - 30)
       const t = tops[tile]

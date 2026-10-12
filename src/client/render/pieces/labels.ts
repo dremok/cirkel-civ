@@ -17,6 +17,9 @@ const CSS = `
   box-shadow: inset 0 0 0 1px rgba(0,0,0,0.12), inset 0 1px 0 rgba(255,255,255,0.25); transition: background 400ms cubic-bezier(.2,.7,.2,1); }
 .cc-plaque .name { padding-bottom: 1px; }
 .cc-plaque.compact { padding: 3px; gap: 0; }
+.cc-plaque.memory { background: rgba(240, 238, 240, 0.8); color: rgba(42, 38, 34, 0.78); box-shadow: 0 6px 16px -10px rgba(42, 38, 34, 0.4); }
+.cc-plaque.memory .pop { filter: saturate(0.6) brightness(1.08); }
+.cc-plaque.memory .name { font-style: italic; }
 .cc-plaque.compact .name, .cc-plaque.compact .hp { display: none; }
 .cc-plaque .cap { width: 10px; height: 10px; margin-left: -2px; color: var(--team-dark); }
 .cc-plaque .hp { position: absolute; left: 30px; right: 12px; bottom: -4px; height: 3px; border-radius: 3px; background: rgba(42,38,34,0.18); overflow: hidden; }

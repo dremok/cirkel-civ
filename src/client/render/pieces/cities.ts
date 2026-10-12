@@ -87,6 +87,9 @@ export interface CityVis {
   toTones: { base: THREE.Color; light: THREE.Color; dark: THREE.Color }
   sweep: number
   smoke: { at: THREE.Vector3; t: number; key: string }[]
+  /** Fog: shown from memory (the tile is explored but out of sight). `veil` eases towards it. */
+  memory: boolean
+  veil: number
   /** Soft glows around lanterns. */
   halos: { slot: number; at: THREE.Vector3; key: string; phase: number }[]
   plaque: Label
@@ -336,9 +339,9 @@ export class CityLayer {
   private time = 0
 
   constructor(private board: Board, root: THREE.Object3D, private labels: Labels, private fx: Fx) {
-    const mat = pieceMaterial({ wall: true, roughness: 0.72, flutter: 0.006, tones: true })
+    const mat = pieceMaterial({ wall: true, roughness: 0.72, flutter: 0.006, tones: true, veil: true })
     mat.side = THREE.DoubleSide
-    const groundMat = pieceMaterial({ wall: true, roughness: 0.92, tones: true })
+    const groundMat = pieceMaterial({ wall: true, roughness: 0.92, tones: true, veil: true })
     groundMat.polygonOffset = true
     groundMat.polygonOffsetFactor = -1
     groundMat.polygonOffsetUnits = -2
@@ -350,7 +353,7 @@ export class CityLayer {
     for (const v of ALL_VARIANTS) {
       const model = cityModel(v)
       const flatV = FLAT.has(v)
-      this.batches.set(v, new Batch(root, [{ geo: model.geo, mat: flatV ? groundMat : mat, shadow: !flatV, receive: true }], CAPACITY[v] ?? 96, { aWall: 3, aTeamLight: 3, aTeamDark: 3 }))
+      this.batches.set(v, new Batch(root, [{ geo: model.geo, mat: flatV ? groundMat : mat, shadow: !flatV, receive: true }], CAPACITY[v] ?? 96, { aWall: 3, aTeamLight: 3, aTeamDark: 3, aVeil: 1 }))
     }
   }
 
@@ -403,7 +406,7 @@ export class CityLayer {
     const vis: CityVis = {
       id: city.id, owner: city.owner, colorIdx, tile: city.tile, name: city.name, pop: city.pop, hp: city.hp,
       walls: city.walls, capital: city.capital, planKey: '', pieces: new Map(),
-      fromColor: tc.base.clone(), toColor: tc.base.clone(), fromTones: tc, toTones: tc, sweep: 1, smoke: [], halos: [], plaque, popEl, hpEl, shown: !animate, dirty: true,
+      fromColor: tc.base.clone(), toColor: tc.base.clone(), fromTones: tc, toTones: tc, sweep: 1, smoke: [], halos: [], memory: false, veil: 0, plaque, popEl, hpEl, shown: !animate, dirty: true,
     }
     this.cities.set(city.id, vis)
     this.replan(map, city, animate)
@@ -525,6 +528,18 @@ export class CityLayer {
     vis.dirty = true
   }
 
+  /** Fog: which cities are shown from memory. */
+  setMemory(ids: Set<CityId>, animate: boolean): void {
+    for (const vis of this.cities.values()) {
+      const m = ids.has(vis.id)
+      if (m === vis.memory && (animate || vis.veil === (m ? 1 : 0))) continue
+      vis.memory = m
+      if (!animate) vis.veil = m ? 1 : 0
+      vis.plaque.el.classList.toggle('memory', m)
+      vis.dirty = true
+    }
+  }
+
   setHp(id: CityId, hp: number): void {
     const vis = this.cities.get(id)
     if (!vis) return
@@ -591,6 +606,11 @@ export class CityLayer {
         vis.sweep = Math.min(1, vis.sweep + dt / 0.85)
         animating = true
       }
+      const veilTo = vis.memory ? 1 : 0
+      if (vis.veil !== veilTo) {
+        vis.veil = Math.abs(veilTo - vis.veil) < 0.02 ? veilTo : vis.veil + (veilTo - vis.veil) * Math.min(1, dt * 4)
+        animating = true
+      }
       if (!vis.shown && [...vis.pieces.values()].some((p) => p.spec.v !== 'ground' && p.rise > 0.5)) {
         vis.shown = true
         vis.plaque.el.style.opacity = ''
@@ -602,14 +622,14 @@ export class CityLayer {
         const flicker = 0.85 + 0.1 * Math.sin(this.time * 2.3 + h.phase) + 0.05 * Math.sin(this.time * 7.1 + h.phase * 2)
         this.m.compose(h.at, this.q.identity(), this.s.setScalar(0.13 * this.board.R))
         this.halos.setMatrix(h.slot, this.m)
-        this.halos.setExtra('aAlpha', h.slot, 0.32 * r * r * flicker)
+        this.halos.setExtra('aAlpha', h.slot, 0.32 * r * r * flicker * (1 - vis.veil))
       }
       for (const sm of vis.smoke) {
         sm.t -= dt
         if (sm.t <= 0) {
           sm.t = 1.4 + hash01(vis.id * 7 + Math.floor(this.time * 3), Math.round(sm.at.x * 100)) * 1.6
           const piece = vis.pieces.get(sm.key)
-          if (piece && piece.rise >= 1) this.fx.smoke(sm.at)
+          if (piece && piece.rise >= 1 && !vis.memory) this.fx.smoke(sm.at)
         }
       }
     }
@@ -650,6 +670,7 @@ export class CityLayer {
       const roof = sp.roof ?? 'base'
       this.c.copy(roof instanceof THREE.Color ? roof : tone[roof]).multiplyScalar(sp.shade)
       b.setColor(p.slot, this.c)
+      b.setExtra('aVeil', p.slot, vis.veil)
       b.setExtra('aTeamLight', p.slot, tone.light.r, tone.light.g, tone.light.b)
       b.setExtra('aTeamDark', p.slot, tone.dark.r, tone.dark.g, tone.dark.b)
     }

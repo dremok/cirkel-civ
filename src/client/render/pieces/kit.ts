@@ -113,10 +113,10 @@ export class Kit {
     const col = new Float32Array(n * 3)
     for (let i = 0; i < n; i++) { col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b }
     geo.setAttribute('color', new THREE.BufferAttribute(col, 3))
-    geo.setAttribute('paint', new THREE.BufferAttribute(new Float32Array(n).fill(paint), 1))
-    geo.setAttribute('flutter', new THREE.BufferAttribute(fl, 1))
-    geo.setAttribute('idle', new THREE.BufferAttribute(new Float32Array(n).fill(this.idle), 1))
-    geo.setAttribute('mottle', new THREE.BufferAttribute(new Float32Array(n).fill(o.mottle ?? 0), 1))
+    // paint, flutter, idle and mottle packed into one attribute (WebGL allows only 16 in all)
+    const pfim = new Float32Array(n * 4)
+    for (let i = 0; i < n; i++) { pfim[i * 4] = paint; pfim[i * 4 + 1] = fl[i]; pfim[i * 4 + 2] = this.idle; pfim[i * 4 + 3] = o.mottle ?? 0 }
+    geo.setAttribute('pfim', new THREE.BufferAttribute(pfim, 4))
     this.parts.push({ g: geo, sil: this.sil })
   }
 
@@ -135,7 +135,7 @@ export class Kit {
 
 function emptyGeometry(): THREE.BufferGeometry {
   const g = new THREE.BufferGeometry()
-  for (const [k, n] of [['position', 3], ['normal', 3], ['color', 3], ['paint', 1], ['flutter', 1], ['idle', 1], ['mottle', 1]] as const) {
+  for (const [k, n] of [['position', 3], ['normal', 3], ['color', 3], ['pfim', 4]] as const) {
     g.setAttribute(k, new THREE.Float32BufferAttribute([], n))
   }
   return g
@@ -240,7 +240,13 @@ export interface PieceMatOpts {
   idle?: boolean
   /** Instances carry `aTeamLight` and `aTeamDark` (the player's light and dark tones). */
   tones?: boolean
+  /** Instances carry `aFade` (1 = solid, 0 = gone): a soft dissolve, as into mist. */
+  fade?: boolean
+  /** Instances carry `aVeil` (0 = as is, 1 = remembered: a little faded, cooler, windows dim). */
+  veil?: boolean
 }
+
+const IGN = 'float pIgn(vec2 p) { return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715)))); }'
 
 export function pieceMaterial(o: PieceMatOpts = {}): THREE.MeshStandardMaterial {
   const m = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: o.roughness ?? 0.6, metalness: 0, flatShading: o.flatShading ?? false })
@@ -249,15 +255,18 @@ export function pieceMaterial(o: PieceMatOpts = {}): THREE.MeshStandardMaterial 
     Object.assign(sh.uniforms, pieceUniforms)
     sh.vertexShader = sh.vertexShader
       .replace('#include <common>', `#include <common>
-        attribute float paint;
-        attribute float flutter;
-        attribute float idle;
-        attribute float mottle;
+        attribute vec4 pfim;
+        #define paint pfim.x
+        #define flutter pfim.y
+        #define idle pfim.z
+        #define mottle pfim.w
         varying float vMottle;
         varying vec2 vMottleXZ;
         ${o.wall ? 'attribute vec3 aWall;' : ''}
         ${o.idle ? 'attribute float aPhase;' : ''}
         ${o.tones ? 'attribute vec3 aTeamLight; attribute vec3 aTeamDark;' : ''}
+        ${o.fade ? 'attribute float aFade; varying float vFade;' : ''}
+        ${o.veil ? 'attribute float aVeil; varying float vVeil;' : ''}
         uniform float uPieceTime;
         varying float vGlow;`)
       .replace('#include <color_vertex>', `
@@ -299,6 +308,8 @@ export function pieceMaterial(o: PieceMatOpts = {}): THREE.MeshStandardMaterial 
           #endif
           vMottleXZ = (modelMatrix * mwp).xz;
           vMottle = mottle;
+          ${o.fade ? 'vFade = aFade;' : ''}
+          ${o.veil ? 'vVeil = aVeil;' : ''}
         }`)
     sh.fragmentShader = sh.fragmentShader
       .replace('#include <common>', `#include <common>
@@ -307,11 +318,16 @@ export function pieceMaterial(o: PieceMatOpts = {}): THREE.MeshStandardMaterial 
         varying float vGlow;
         varying float vMottle;
         varying vec2 vMottleXZ;
+        ${o.fade ? 'varying float vFade;' : ''}
+        ${o.veil ? 'varying float vVeil;' : ''}
+        ${IGN}
         float pHash(vec2 p) { vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
         float pNoise(vec2 p) {
           vec2 i = floor(p); vec2 f = fract(p); vec2 u = f * f * (3.0 - 2.0 * f);
           return mix(mix(pHash(i), pHash(i + vec2(1.0, 0.0)), u.x), mix(pHash(i + vec2(0.0, 1.0)), pHash(i + vec2(1.0, 1.0)), u.x), u.y);
         }`)
+      .replace('#include <clipping_planes_fragment>', `#include <clipping_planes_fragment>
+        ${o.fade ? 'if (vFade < 0.999 && pIgn(gl_FragCoord.xy) > vFade) discard;' : ''}`)
       .replace('#include <color_fragment>', `#include <color_fragment>
         if (vMottle > 0.001) {
           // drifts of sage and chartreuse (on lawns), moss and sun-bleach (on roofs)
@@ -319,10 +335,34 @@ export function pieceMaterial(o: PieceMatOpts = {}): THREE.MeshStandardMaterial 
           float n2 = pNoise(vMottleXZ * 24.0 + 3.1);
           vec3 tint = mix(vec3(0.68, 0.9, 0.86), vec3(1.24, 1.12, 0.66), smoothstep(0.3, 0.7, n1));
           diffuseColor.rgb *= mix(vec3(1.0), tint * (0.86 + 0.26 * n2), vMottle);
-        }`)
+        }
+        ${o.veil ? `{
+          // remembered: the world's cool twilight veil (desaturate 10%, cool multiply, 16% toward
+          // lavender), in linear albedo terms
+          vec3 c0 = diffuseColor.rgb;
+          float l = dot(c0, vec3(0.2126, 0.7152, 0.0722));
+          vec3 veiled = mix(c0, vec3(l), 0.1) * vec3(0.56, 0.61, 1.0);
+          veiled = mix(veiled, vec3(0.18, 0.17, 0.37), 0.16);
+          diffuseColor.rgb = mix(c0, veiled, vVeil);
+        }` : ''}`)
       .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
-        totalEmissiveRadiance += vGlow * diffuseColor.rgb * uGlowColor * uGlowStrength;`)
+        totalEmissiveRadiance += vGlow * diffuseColor.rgb * uGlowColor * uGlowStrength${o.veil ? ' * (1.0 - 0.85 * vVeil)' : ''};`)
   }
-  m.customProgramCacheKey = () => `piece:${amp}:${o.wall ? 1 : 0}:${o.idle ? 1 : 0}:${o.tones ? 1 : 0}`
+  m.customProgramCacheKey = () => `piece:${amp}:${o.wall ? 1 : 0}:${o.idle ? 1 : 0}:${o.tones ? 1 : 0}:${o.fade ? 1 : 0}:${o.veil ? 1 : 0}`
+  return m
+}
+
+/** Shadow-map depth for instanced pieces that dissolve (`aFade`), so a fading figure's shadow fades too. */
+export function fadeDepthMaterial(): THREE.MeshDepthMaterial {
+  const m = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking })
+  m.onBeforeCompile = (sh) => {
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>\nattribute float aFade;\nvarying float vFade;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvFade = aFade;')
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', `#include <common>\nvarying float vFade;\n${IGN}`)
+      .replace('#include <clipping_planes_fragment>', '#include <clipping_planes_fragment>\nif (vFade < 0.999 && pIgn(gl_FragCoord.xy) > vFade) discard;')
+  }
+  m.customProgramCacheKey = () => 'piece-depth-fade'
   return m
 }

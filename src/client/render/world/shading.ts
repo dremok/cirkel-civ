@@ -3,7 +3,7 @@
 // All materials stay three.js standard materials (lights, shadows, fog, tone mapping for free).
 
 import * as THREE from 'three'
-import { WATER_Y } from './layout.ts'
+import { BOTTOM_Y, WATER_Y } from './layout.ts'
 
 export const shared = {
   uTime: { value: 0 },
@@ -15,6 +15,92 @@ export const shared = {
   uCloudStrength: { value: 0.45 },
   uWind: { value: 1 },
 }
+
+/** Fog of war, per tile: R = explored (0/1, geometry under clouds collapses), G = in sight
+ * (animated, lifts the veil), B = explored (animated, parts the clouds). */
+export const fogShared = {
+  uFogTiles: { value: null as THREE.Texture | null },
+  uFogDims: { value: new THREE.Vector2(1, 1) },
+  uFogOn: { value: 0 },
+}
+
+/** Where unexplored land collapses to, under the clouds, so nothing of its shape survives. */
+export const FOG_FLOOR = -0.3
+
+const FOG_FN = /* glsl */ `
+uniform highp sampler2D uFogTiles;
+uniform vec2 uFogDims;
+uniform float uFogOn;
+vec4 fogAt(float id) {
+  if (uFogOn < 0.5 || id < -0.5) return vec4(1.0);
+  int i = int(id + 0.5);
+  int w = int(uFogDims.x + 0.5);
+  return texelFetch(uFogTiles, ivec2(i - (i / w) * w, i / w), 0);
+}
+`
+
+/** Vertex code that hides what lies under the clouds. Terrain collapses to the cloud floor and the
+ * sides of known columns facing unknown ones run all the way down, so no neighbour's height shows;
+ * instanced props shrink to nothing. Driven by the animated explored amount (B), so as the clouds
+ * part the land rises out of them and then its trees and flowers grow in. Sets vFog. */
+function fogVertex(mode: FogMode): string {
+  const FLOOR = FOG_FLOOR.toFixed(3), BOTTOM = BOTTOM_Y.toFixed(3)
+  if (mode === 'terrain') {
+    return /* glsl */ `
+      vFog = fogAt(aTile);
+      {
+        float eT = smoothstep(0.0, 0.6, vFog.b);
+        if (aLow > 0.5) transformed.y = mix(${FLOOR}, mix(${BOTTOM}, transformed.y, fogAt(aNb).b), eT);
+        else transformed.y = mix(${FLOOR}, transformed.y, eT);
+      }`
+  }
+  if (mode === 'instanced') return 'vFog = fogAt(aTile);\ntransformed *= smoothstep(0.55, 1.0, vFog.b);'
+  // The plain rock skirt that stands in for unexplored columns at the board's edge (it goes once the
+  // real column has fully risen).
+  if (mode === 'skirt') return 'vFog = vec4(1.0);\nif (fogAt(aTile).b > 0.999 || uFogOn < 0.5) transformed = vec3(0.0);'
+  return 'vFog = fogAt(aTile);'
+}
+
+type FogMode = 'terrain' | 'instanced' | 'surface' | 'skirt'
+
+function fogVertexDecl(mode: FogMode): string {
+  return `${FOG_FN}\nattribute float aTile;\nvarying vec4 vFog;${mode === 'terrain' ? '\nattribute float aNb;\nattribute float aLow;' : ''}`
+}
+
+/** The veil over known land out of sight: evening shade on the same land. Most of the hue stays;
+ * it shifts toward blue-lavender, dims a little, loses a little contrast, and a faint mist lies low
+ * on the columns. Unexplored surfaces (under the clouds) take the clouds' lilac. Works on the
+ * display-encoded colour. */
+const FOG_VEIL = /* glsl */ `
+{
+  #ifdef TONE_MAPPING
+    vec3 vc = gl_FragColor.rgb;
+  #else
+    vec3 vc = pow(max(gl_FragColor.rgb, 0.0), vec3(1.0 / 2.2));
+  #endif
+  if (vFog.r < 0.5) vc = vec3(0.86, 0.8, 0.86);
+  else {
+    float vv = 1.0 - vFog.g;
+    // Twilight: cool blue-lavender light, a touch dimmer...
+    vec3 d = vc * mix(vec3(1.0), vec3(0.74, 0.79, 1.0), vv);
+    // ...with the colour kept (a little richer even, so it never greys out)...
+    float l = dot(d, vec3(0.299, 0.587, 0.114));
+    d = mix(vec3(l), d, 1.0 + 0.18 * vv);
+    // ...and the darks lifted toward lavender for slightly softer contrast.
+    d = d * (1.0 - 0.1 * vv) + vec3(0.045, 0.035, 0.1) * vv;
+    // A faint sheen of mist lying low: on the lower sides of the columns, and a breath on low tops.
+    float lowM = 1.0 - smoothstep(-0.7, 0.55, vWorldP.y);
+    float side = 1.0 - smoothstep(0.55, 0.95, vUp);
+    d = mix(d, vec3(0.8, 0.79, 0.93), lowM * (0.22 * side + 0.07) * vv);
+    vc = d;
+  }
+  #ifdef TONE_MAPPING
+    gl_FragColor.rgb = vc;
+  #else
+    gl_FragColor.rgb = pow(vc, vec3(2.2));
+  #endif
+}
+`
 
 export const GLSL_NOISE = /* glsl */ `
 float wHash12(vec2 p) {
@@ -87,6 +173,9 @@ export interface PatchOptions {
   topDetail?: boolean
   /** Dancing caustics on anything below the sea surface. */
   caustics?: boolean
+  /** Fog of war: how this mesh hides under the clouds (it needs an `aTile` attribute; terrain also
+   * `aNb` and `aLow`, see builder.ts). Explored land out of sight gets the veil in every mode. */
+  fog?: FogMode
   /** Extra code, see water.ts. Give it a `name` so its program is never shared with another patch. */
   extra?: (shader: THREE.WebGLProgramParametersWithUniforms) => void
   name?: string
@@ -99,7 +188,7 @@ const LIGHTS_WITH_CLOUDS = THREE.ShaderChunk.lights_fragment_begin.replace(
 
 /** Adds cloud shadows (and optionally wind / top detail) to a standard material. */
 export function patchMaterial<T extends THREE.Material>(material: T, opts: PatchOptions = {}): T {
-  const key = `w${opts.wind ?? 0}${opts.topDetail ? 't' : ''}${opts.caustics ? 'c' : ''}${opts.extra ? `x${opts.name ?? ''}` : ''}`
+  const key = `w${opts.wind ?? 0}${opts.topDetail ? 't' : ''}${opts.caustics ? 'c' : ''}${opts.fog ? `f${opts.fog}` : ''}${opts.extra ? `x${opts.name ?? ''}` : ''}`
   material.customProgramCacheKey = () => key
   material.onBeforeCompile = (shader) => {
     shader.uniforms.uTime = shared.uTime
@@ -107,6 +196,7 @@ export function patchMaterial<T extends THREE.Material>(material: T, opts: Patch
     shader.uniforms.uCloudStrength = shared.uCloudStrength
     shader.uniforms.uWind = shared.uWind
     shader.uniforms.uMist = shared.uMist
+    if (opts.fog) Object.assign(shader.uniforms, fogShared)
     let vs = shader.vertexShader
     let fs = shader.fragmentShader
     vs = vs.replace(
@@ -149,11 +239,16 @@ export function patchMaterial<T extends THREE.Material>(material: T, opts: Patch
         ${opts.topDetail ? 'vDetail = aDetail;' : ''}
       }`,
     )
+    if (opts.fog) {
+      vs = vs.replace('#include <common>', `#include <common>\n${fogVertexDecl(opts.fog)}`)
+      vs = vs.replace('#include <project_vertex>', `${fogVertex(opts.fog)}\n#include <project_vertex>`)
+    }
     fs = fs.replace(
       '#include <common>',
-      `#include <common>\nuniform float uTime;\nuniform float uMist;\nvarying vec3 vWorldP;\nvarying float vUp;${opts.topDetail ? '\nvarying float vDetail;' : ''}\n${GLSL_NOISE}\n${CLOUD_FN}`,
+      `#include <common>\nuniform float uTime;\nuniform float uMist;\nvarying vec3 vWorldP;\nvarying float vUp;${opts.topDetail ? '\nvarying float vDetail;' : ''}${opts.fog ? '\nvarying vec4 vFog;' : ''}\n${GLSL_NOISE}\n${CLOUD_FN}`,
     )
-    fs = fs.replace('#include <fog_fragment>', FOG_WITH_MIST)
+    fs = fs.replace('#include <fog_fragment>', `${opts.fog ? FOG_VEIL : ''}\n${FOG_WITH_MIST}`)
+    if (opts.fog === 'surface') fs = fs.replace('#include <clipping_planes_fragment>', '#include <clipping_planes_fragment>\nif (vFog.b < 0.5) discard;')
     fs = fs.replace(
       '#include <lights_fragment_begin>',
       `float wCloud = worldCloud(vWorldP.xz);\n${opts.caustics ? CAUSTICS : ''}\n${LIGHTS_WITH_CLOUDS}`,
@@ -248,16 +343,18 @@ export function patchMaterial<T extends THREE.Material>(material: T, opts: Patch
   return material
 }
 
-/** A depth material for shadow casting that sways like `patchMaterial(..., { wind })`. */
-export function windDepthMaterial(wind: number): THREE.MeshDepthMaterial {
+/** A depth material for shadow casting that sways like `patchMaterial(..., { wind })` and, with
+ * `fog`, collapses what is hidden under the clouds so it casts no telltale shadows. */
+export function windDepthMaterial(wind: number, fog?: 'terrain' | 'instanced'): THREE.MeshDepthMaterial {
   const m = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking })
-  m.customProgramCacheKey = () => `wd${wind}`
+  m.customProgramCacheKey = () => `wd${wind}${fog ?? ''}`
   m.onBeforeCompile = (shader) => {
     shader.uniforms.uTime = shared.uTime
     shader.uniforms.uWind = shared.uWind
-    shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', '#include <common>\nuniform float uTime;\nuniform float uWind;')
-      .replace(
+    if (fog) Object.assign(shader.uniforms, fogShared)
+    let vs = shader.vertexShader.replace('#include <common>', `#include <common>\nuniform float uTime;\nuniform float uWind;${fog ? `\n${fogVertexDecl(fog)}` : ''}`)
+    if (wind > 0) {
+      vs = vs.replace(
         '#include <begin_vertex>',
         /* glsl */ `#include <begin_vertex>
         {
@@ -277,6 +374,21 @@ export function windDepthMaterial(wind: number): THREE.MeshDepthMaterial {
           transformed += (transpose(im) * w) / sc2;
         }`,
       )
+    }
+    if (fog) vs = vs.replace('#include <project_vertex>', `${fogVertex(fog)}\n#include <project_vertex>`)
+    shader.vertexShader = vs
   }
   return m
+}
+
+/** Fog for a plain (unlit) instanced material, e.g. the contact shadows under props. */
+export function patchFogBasic<T extends THREE.Material>(material: T): T {
+  material.customProgramCacheKey = () => 'fogbasic'
+  material.onBeforeCompile = (shader) => {
+    Object.assign(shader.uniforms, fogShared)
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', `#include <common>\n${fogVertexDecl('instanced')}`)
+      .replace('#include <project_vertex>', `${fogVertex('instanced')}\n#include <project_vertex>`)
+  }
+  return material
 }

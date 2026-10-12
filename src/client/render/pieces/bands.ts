@@ -7,6 +7,12 @@ import type { TileId } from '../../../engine/types.ts'
 import type { Board } from './common.ts'
 
 export interface BandOpts {
+  /** Tiles that may carry geometry (risers never drop onto others). */
+  allowed?: Uint8Array | null
+  /** Height of a tile's top (default: the board's tile top). */
+  topY?: (tile: TileId) => number
+  /** Per tile veil (1 = out of sight), written as an `aVeil` vertex attribute. */
+  veil?: (tile: TileId) => number
   /** Distance of the outer line from the hex edge. */
   inset: number
   /** Band width inwards from the outer line. */
@@ -31,8 +37,10 @@ function intersect(p: P2, u: P2, q: P2, w: P2): P2 {
 export function buildBand(board: Board, tiles: Iterable<TileId>, inRegion: ((t: TileId) => boolean) | null, o: BandOpts): THREE.BufferGeometry | null {
   const pos: number[] = []
   const uv: number[] = []
+  const veil: number[] = []
   const idx: number[] = []
   const R = board.R
+  let veilNow = 0
   const corners: P2[] = []
   const tmp = new THREE.Vector3()
   const pushQuad = (a: number[], b: number[], c: number[], d: number[], ua: number[], ub: number[], uc: number[], ud: number[]) => {
@@ -40,12 +48,14 @@ export function buildBand(board: Board, tiles: Iterable<TileId>, inRegion: ((t: 
     const base = pos.length / 3
     pos.push(...a, ...b, ...c, ...d)
     uv.push(...ua, ...ub, ...uc, ...ud)
+    veil.push(veilNow, veilNow, veilNow, veilNow)
     idx.push(base, base + 1, base + 2, base + 2, base + 1, base + 3)
   }
   const U = (x: number, z: number) => x * 0.83 + z * 1.17
 
+  const ty = o.topY ?? ((t: TileId) => board.tops[t].y)
   for (const tile of tiles) {
-    const top = board.tops[tile]
+    veilNow = o.veil ? o.veil(tile) : 0
     for (let i = 0; i < 6; i++) {
       board.corner(tile, i, tmp)
       corners[i] = { x: tmp.x, z: tmp.z }
@@ -54,7 +64,7 @@ export function buildBand(board: Board, tiles: Iterable<TileId>, inRegion: ((t: 
       const nb = board.across(tile, e)
       return inRegion === null || nb === null || !inRegion(nb)
     })
-    const y = top.y + o.lift
+    const y = ty(tile) + o.lift
     for (let e = 0; e < 6; e++) {
       if (!border[e]) continue
       const c0 = corners[e]
@@ -93,8 +103,8 @@ export function buildBand(board: Board, tiles: Iterable<TileId>, inRegion: ((t: 
         const edge = side === 'start' ? prev : next
         if (border[edge]) return
         const nb = board.across(tile, edge)
-        if (nb === null) return
-        const yb = board.tops[nb].y + o.lift
+        if (nb === null || (o.allowed && !o.allowed[nb])) return
+        const yb = ty(nb) + o.lift
         if (yb >= y - 0.02) return // only the higher tile emits the riser
         const [a, b] = side === 'start' ? [ends(o.inset)[0], ends(o.inset + o.line)[0]] : [ends(o.inset)[1], ends(o.inset + o.line)[1]]
         // push slightly off the cliff face, towards the lower neighbour
@@ -115,27 +125,32 @@ export function buildBand(board: Board, tiles: Iterable<TileId>, inRegion: ((t: 
   const g = new THREE.BufferGeometry()
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3))
   g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2))
+  g.setAttribute('aVeil', new THREE.Float32BufferAttribute(veil, 1))
   g.setIndex(idx)
   g.computeBoundingSphere()
   return g
 }
 
 /** Flat hex fills on the tile tops (very light territory tint). */
-export function buildFill(board: Board, tiles: Iterable<TileId>, inset: number, lift: number): THREE.BufferGeometry | null {
+export function buildFill(board: Board, tiles: Iterable<TileId>, inset: number, lift: number, veilOf?: (t: TileId) => number): THREE.BufferGeometry | null {
   const pos: number[] = []
   const uv: number[] = []
+  const veil: number[] = []
   const idx: number[] = []
   const tmp = new THREE.Vector3()
   for (const tile of tiles) {
     const t = board.tops[tile]
     const base = pos.length / 3
+    const vt = veilOf ? veilOf(tile) : 0
     pos.push(t.x, t.y + lift, t.z)
     uv.push(0, 0)
+    veil.push(vt)
     for (let i = 0; i < 6; i++) {
       board.corner(tile, i, tmp)
       const k = 1 - inset / board.R
       pos.push(t.x + (tmp.x - t.x) * k, t.y + lift, t.z + (tmp.z - t.z) * k)
       uv.push(0, 0)
+      veil.push(vt)
     }
     for (let i = 0; i < 6; i++) idx.push(base, base + 1 + ((i + 1) % 6), base + 1 + i)
   }
@@ -143,6 +158,7 @@ export function buildFill(board: Board, tiles: Iterable<TileId>, inset: number, 
   const g = new THREE.BufferGeometry()
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3))
   g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2))
+  g.setAttribute('aVeil', new THREE.Float32BufferAttribute(veil, 1))
   g.setIndex(idx)
   return g
 }

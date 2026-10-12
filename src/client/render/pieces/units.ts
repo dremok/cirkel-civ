@@ -4,7 +4,7 @@ import { UNIT_MAX_HP } from '../../../engine/config.ts'
 import type { GameState, PlayerId, Stance, TileId, Unit, UnitId, UnitType } from '../../../engine/types.ts'
 import { type Board, colorIndexOf, hash01, teamColors } from './common.ts'
 import { Batch, GLYPH_CELL, arcGeometry, arcMaterial, billboardQuad, flatQuad, silhouetteMaterial, spriteMaterial, textures } from './gfx.ts'
-import { pieceMaterial } from './kit.ts'
+import { fadeDepthMaterial, pieceMaterial } from './kit.ts'
 import { BASE_R, unitModel } from './models.ts'
 
 const TYPES: UnitType[] = ['spear', 'archer', 'rider', 'settler']
@@ -37,6 +37,8 @@ export interface UnitVis {
   glyphPulse: number
   /** Picked-up lift for hover/selection (animated towards `liftTo`). */
   lift: number
+  /** 1 = solid, 0 = dissolved into the mist (fog: spotted / lost). */
+  fade: number
   dirty: boolean
 }
 
@@ -62,7 +64,8 @@ export class UnitLayer {
   private axis = new THREE.Vector3()
 
   constructor(private board: Board, root: THREE.Object3D, private standY: (tile: TileId) => number, private faceYaw: () => number = () => 0) {
-    const body = pieceMaterial({ roughness: 0.58, idle: true, tones: true })
+    const body = pieceMaterial({ roughness: 0.58, idle: true, tones: true, fade: true })
+    const depth = fadeDepthMaterial()
     body.side = THREE.DoubleSide
     const sil = silhouetteMaterial()
     for (const type of TYPES) {
@@ -70,7 +73,8 @@ export class UnitLayer {
       const b = new Batch(root, [
         { geo: g.geo, mat: body, shadow: true, receive: true },
         { geo: g.sil, mat: sil, order: 7 },
-      ], CAP, { aSil: 1, aPhase: 1, aTeamLight: 3, aTeamDark: 3 })
+      ], CAP, { aSil: 1, aPhase: 1, aTeamLight: 3, aTeamDark: 3, aFade: 1 })
+      b.meshes[0].customDepthMaterial = depth
       // the silhouette takes the team colour
       b.meshes[1].instanceColor = b.meshes[0].instanceColor
       this.batches.set(type, b)
@@ -117,8 +121,8 @@ export class UnitLayer {
       if (vis.hp !== u.hp) { vis.hp = u.hp; vis.dirty = true }
       if (vis.stance !== u.stance) { vis.stance = u.stance; vis.dirty = true }
       // Settle any leftover animation state (e.g. a skipped replay).
-      if (vis.tilt !== 0 || vis.scale !== 1 || vis.deco01 !== 1 || vis.glyphOverride !== null || vis.pos.distanceToSquared(this.standAt(vis.tile, this.v)) > 1e-8) {
-        vis.tilt = 0; vis.scale = 1; vis.deco01 = 1; vis.glyphOverride = null
+      if (vis.tilt !== 0 || vis.scale !== 1 || vis.deco01 !== 1 || vis.fade !== 1 || vis.glyphOverride !== null || vis.pos.distanceToSquared(this.standAt(vis.tile, this.v)) > 1e-8) {
+        vis.tilt = 0; vis.scale = 1; vis.deco01 = 1; vis.fade = 1; vis.glyphOverride = null
         this.place(vis, vis.tile)
       }
     }
@@ -134,7 +138,7 @@ export class UnitLayer {
       pos: new THREE.Vector3(), ground: 0,
       yaw: this.faceYaw() + (hash01(u.id, 7) - 0.5) * 0.5,
       tilt: 0, tdx: 1, tdz: 0, scale: 1, deco01: 1,
-      glyphOverride: null, glyphPulse: 0, lift: 0, dirty: true,
+      glyphOverride: null, glyphPulse: 0, lift: 0, fade: 1, dirty: true,
     }
     // decorations share one slot index across their batches
     this.arcs.alloc()
@@ -237,8 +241,9 @@ export class UnitLayer {
     const batch = this.batches.get(vis.type)!
     batch.setMatrix(vis.slot, m)
 
-    const d = vis.deco01 * Math.min(1, vis.scale)
+    const d = vis.deco01 * Math.min(1, vis.scale) * vis.fade
     batch.setExtra('aSil', vis.slot, d)
+    batch.setExtra('aFade', vis.slot, vis.fade)
     // contact shadow, shrinking and fading as the unit lifts off the ground
     const lift = Math.max(0, vis.pos.y + vis.lift - vis.ground)
     const sh = 0.98 * (1 - Math.min(0.35, lift * 0.8)) * Math.max(vis.scale, 0.001)

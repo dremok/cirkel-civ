@@ -2,8 +2,10 @@
 // Extra params: size=small|medium|large, quality=low|medium|high|ultra, view=start|close|coast,
 // focus=<tile>, zoom=<wheel notches>, yaw=<px of right-drag>, tilt=<px>, sun=<azimuth deg>,
 // post=0|glow|full (force the post chain), intro=0 (no camera glide), home=start (frame the first start area),
-// hud=1 (a mock phone HUD with view insets). Debug: world.__bench(n) -> ms per frame.
+// hud=1 (a mock phone HUD with view insets), fog=start|mid (fog of war presets; the panel at the
+// bottom left toggles fog, scouts by clicking a tile and resets). Debug: world.__bench(n) -> ms.
 import * as THREE from 'three'
+import { distance, tilesInRange } from '../../engine/hex.ts'
 import { generateMap } from '../../engine/mapgen.ts'
 import type { WorldQuality } from '../render/api.ts'
 import { createWorld } from '../render/world/createWorld.ts'
@@ -29,6 +31,77 @@ if (q.get('hud') === '1') {
   world.setViewInsets?.({ top: 70, bottom: innerHeight * 0.45, left: 0, right: 0 })
 }
 if (q.get('home') === 'start') world.home?.(false, { around: map.starts[0] })
+
+// ---------------------------------------------------------------------------------------------
+// Fog of war playground: our side's sight is the capital (3) plus a scout (2) we move by clicking.
+const n = map.tiles.length
+const explored = new Uint8Array(n)
+let scout: number | null = null
+const disc = (t: number, r: number) => tilesInRange(map, t, r)
+function fogPush(animate: boolean) {
+  const visible = new Uint8Array(n)
+  for (const t of disc(map.starts[0], 3)) visible[t] = 1
+  if (scout !== null) for (const t of disc(scout, 2)) visible[t] = 1
+  for (let t = 0; t < n; t++) if (visible[t]) explored[t] = 1
+  world.setFog?.({ explored, visible }, { animate })
+}
+function fogReset() {
+  explored.fill(0)
+  scout = null
+  fogPush(false)
+}
+/** A mid-game view: we scouted a corridor toward the middle; the scout now stands at its end. */
+function fogMid() {
+  explored.fill(0)
+  const a = map.tiles[map.starts[0]], b = map.tiles[map.starts[1] ?? map.starts[0]]
+  const steps = Math.max(1, distance(map, a.id, b.id))
+  let last = a.id
+  for (let i = 0; i <= Math.ceil(steps * 0.62); i++) {
+    const f = i / steps
+    const t = map.tiles.reduce((best, c) => {
+      const want = { x: a.col + (b.col - a.col) * f, y: a.row + (b.row - a.row) * f + Math.sin(f * 5) * 2.2 }
+      const d = Math.hypot(c.col - want.x, c.row - want.y)
+      return d < best.d ? { id: c.id, d } : best
+    }, { id: a.id, d: Infinity }).id
+    for (const u of disc(t, 2)) explored[u] = 1
+    last = t
+  }
+  scout = last
+  fogPush(false)
+}
+const fogMode = q.get('fog')
+if (fogMode === 'start') fogReset()
+if (fogMode === 'mid') fogMid()
+Object.assign(window as unknown as Record<string, unknown>, { fogDemo: { reset: fogReset, mid: fogMid, scoutTo: (t: number) => { scout = t; fogPush(true) } } })
+
+// A small control panel.
+const panel = document.body.appendChild(document.createElement('div'))
+panel.style.cssText = 'position:fixed;left:12px;bottom:12px;z-index:10;display:flex;gap:6px;font:13px system-ui;'
+const button = (label: string, fn: () => void) => {
+  const el = panel.appendChild(document.createElement('button'))
+  el.textContent = label
+  el.style.cssText = 'padding:6px 10px;border-radius:8px;border:1px solid #d9cfbf;background:rgba(247,242,232,.9);cursor:pointer'
+  el.onclick = fn
+  return el
+}
+let scouting = false
+const fogBtn = button(fogMode ? 'Fog: on' : 'Fog: off', () => {
+  const on = fogBtn.textContent === 'Fog: off'
+  fogBtn.textContent = on ? 'Fog: on' : 'Fog: off'
+  if (on) fogReset()
+  else world.setFog?.(null)
+})
+const scoutBtn = button('Scout: off', () => {
+  scouting = !scouting
+  scoutBtn.textContent = scouting ? 'Scout: click a tile' : 'Scout: off'
+})
+button('Reset', () => { if (fogBtn.textContent === 'Fog: on') fogReset() })
+world.renderer.domElement.addEventListener('click', (e) => {
+  if (!scouting || fogBtn.textContent !== 'Fog: on') return
+  const t = world.pick(e.clientX, e.clientY)
+  if (t !== null) { scout = t; fogPush(true) }
+})
+if (q.get('panel') === '0') panel.remove()
 
 const view = q.get('view')
 if (view === 'close' || view === 'start') world.focus(map.starts[0], false)

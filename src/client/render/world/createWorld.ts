@@ -8,13 +8,14 @@ import type { World, WorldQuality } from '../api.ts'
 import { NATURE } from '../palette.ts'
 import { buildMotes, buildPuffs, buildVignette } from './atmosphere.ts'
 import { buildBirds } from './birds.ts'
+import { CLOUD_SURFACE, buildClouds, type FogClouds } from './clouds.ts'
 import { BOTTOM_Y, buildLayout } from './layout.ts'
 import { createPicker } from './pick.ts'
 import { installGrade } from './grade.ts'
 import { createPost } from './post.ts'
 import { buildProps } from './props.ts'
 import { createRig } from './rig.ts'
-import { shared } from './shading.ts'
+import { fogShared, shared } from './shading.ts'
 import { BACKDROP, buildEnvironment, buildSky } from './sky.ts'
 import { buildTerrain } from './terrain.ts'
 import { buildWater } from './water.ts'
@@ -74,7 +75,11 @@ export function createWorld(container: HTMLElement, map: GameMap, opts: WorldOpt
   const scene = new THREE.Scene()
   const camera = new THREE.PerspectiveCamera(30, Math.max(1, container.clientWidth) / Math.max(1, container.clientHeight), 0.5, 900)
 
-  const picker = createPicker(layout)
+  // Fog of war hides heights under the clouds: picking, tileTop and the camera use these.
+  const effStand = layout.stand.slice()
+  const effPick = layout.pickTop.slice()
+  const effCrag = layout.cragTop.slice()
+  const picker = createPicker({ ...layout, pickTop: effPick, cragTop: effCrag })
   const ray = new THREE.Ray()
   const ndc = new THREE.Vector2()
   function rayFromClient(clientX: number, clientY: number, cam: THREE.Camera = camera) {
@@ -86,7 +91,7 @@ export function createWorld(container: HTMLElement, map: GameMap, opts: WorldOpt
   }
   const rig = createRig(camera, renderer.domElement, layout, (x, y) => {
     const hit = picker.pick(rayFromClient(x, y))
-    return hit ? layout.stand[hit.tile] : null
+    return hit ? effStand[hit.tile] : null
   })
 
   // Light, placed relative to the default view so every screen gets the same key light.
@@ -136,11 +141,61 @@ export function createWorld(container: HTMLElement, map: GameMap, opts: WorldOpt
   const puffs = buildPuffs(layout, BOTTOM_Y)
   scene.add(puffs.mesh)
 
+  // Fog of war. Per tile: the target (explored, in sight) and the animated amounts.
+  const nTiles = map.tiles.length
+  const fogE = new Uint8Array(nTiles).fill(1)
+  const fogV = new Uint8Array(nTiles).fill(1)
+  const fogEa = new Float32Array(nTiles).fill(1)
+  const fogVa = new Float32Array(nTiles).fill(1)
+  const fogData = new Uint8Array(map.width * map.height * 4).fill(255)
+  const fogTex = new THREE.DataTexture(fogData, map.width, map.height, THREE.RGBAFormat)
+  fogTex.magFilter = fogTex.minFilter = THREE.NearestFilter
+  fogTex.needsUpdate = true
+  fogShared.uFogTiles.value = fogTex
+  fogShared.uFogDims.value.set(map.width, map.height)
+  fogShared.uFogOn.value = 0
+  let fogOn = false
+  let fogAnimating = false
+  let clouds: FogClouds | null = null
+  let cloudsDensity = -1
+  const FOG_SECONDS = 0.8
+  function syncFogTex() {
+    for (let t = 0; t < nTiles; t++) {
+      fogData[t * 4] = fogE[t] * 255
+      fogData[t * 4 + 1] = Math.round(fogVa[t] * 255)
+      fogData[t * 4 + 2] = Math.round(fogEa[t] * 255)
+    }
+    fogTex.needsUpdate = true
+  }
+  function ensureClouds() {
+    if (!fogOn) return
+    if (clouds && cloudsDensity === density(quality)) return
+    if (clouds) { scene.remove(clouds.mesh); clouds.dispose() }
+    clouds = buildClouds(layout, quality, sunDir)
+    cloudsDensity = density(quality)
+    clouds.setExplored(fogEa)
+    scene.add(clouds.mesh)
+  }
+  function stepFog(dt: number) {
+    if (!fogAnimating) return
+    const k = dt / FOG_SECONDS
+    let moving = false
+    for (let t = 0; t < nTiles; t++) {
+      const e = fogEa[t], v = fogVa[t]
+      if (e !== fogE[t]) { fogEa[t] = e < fogE[t] ? Math.min(fogE[t], e + k) : Math.max(fogE[t], e - k); moving = true }
+      if (v !== fogV[t]) { fogVa[t] = v < fogV[t] ? Math.min(fogV[t], v + k) : Math.max(fogV[t], v - k); moving = true }
+    }
+    syncFogTex()
+    clouds?.setExplored(fogEa)
+    fogAnimating = moving
+  }
+
   const drawSize = new THREE.Vector2()
   let post: ReturnType<typeof createPost> | null = null
   let postKind: 'full' | 'glow' | null = null
   function applyQuality() {
     const t = TIERS[quality]
+    ensureClouds()
     if (density(quality) !== propsDensity) {
       scene.remove(props.group)
       props.dispose()
@@ -206,6 +261,7 @@ export function createWorld(container: HTMLElement, map: GameMap, opts: WorldOpt
     fog.near = d + boardR * 0.3
     fog.far = d + boardR * 6
     if (birds.mesh.visible) birds.update(time, camera.position)
+    stepFog(dt)
     for (const cb of frameCbs) cb(dt, time)
     draw(dt)
   }
@@ -262,7 +318,7 @@ export function createWorld(container: HTMLElement, map: GameMap, opts: WorldOpt
     camera,
     map,
     tileTop(tile) {
-      return new THREE.Vector3(layout.cx[tile], layout.stand[tile], layout.cz[tile])
+      return new THREE.Vector3(layout.cx[tile], effStand[tile], layout.cz[tile])
     },
     pick(clientX, clientY) {
       return picker.pick(rayFromClient(clientX, clientY))?.tile ?? null
@@ -276,7 +332,7 @@ export function createWorld(container: HTMLElement, map: GameMap, opts: WorldOpt
       props.setCleared(cleared)
     },
     focus(tile, animate, focusOpts) {
-      rig.focus(layout.cx[tile], layout.stand[tile], layout.cz[tile], animate, focusOpts?.zoom)
+      rig.focus(layout.cx[tile], effStand[tile], layout.cz[tile], animate, focusOpts?.zoom)
     },
     setViewInsets(insets) {
       rig.setInsets(insets)
@@ -309,7 +365,41 @@ export function createWorld(container: HTMLElement, map: GameMap, opts: WorldOpt
     },
     home(animate = true, homeOpts) {
       const t = homeOpts?.around
-      rig.home(animate, t === undefined ? undefined : t === null ? null : { x: layout.cx[t], y: layout.stand[t], z: layout.cz[t] })
+      rig.home(animate, t === undefined ? undefined : t === null ? null : { x: layout.cx[t], y: effStand[t], z: layout.cz[t] })
+    },
+    setFog(fog, fogOpts) {
+      const wasOn = fogOn
+      if (!fog) {
+        fogOn = false
+        fogAnimating = false
+        fogShared.uFogOn.value = 0
+        fogE.fill(1); fogV.fill(1); fogEa.fill(1); fogVa.fill(1)
+        effStand.set(layout.stand); effPick.set(layout.pickTop); effCrag.set(layout.cragTop)
+        if (clouds) clouds.mesh.visible = false
+        syncFogTex()
+        return
+      }
+      fogOn = true
+      fogShared.uFogOn.value = 1
+      for (let t = 0; t < nTiles; t++) {
+        const v = fog.visible[t] ? 1 : 0
+        fogV[t] = v
+        fogE[t] = fog.explored[t] || v ? 1 : 0
+      }
+      // Under the clouds a tile has no height of its own: tileTop and picking use one flat cloud
+      // surface for every clouded tile, so nothing drawn or picked there reveals the land.
+      for (let t = 0; t < nTiles; t++) {
+        const known = fogE[t] === 1
+        effStand[t] = known ? layout.stand[t] : CLOUD_SURFACE
+        effPick[t] = known ? layout.pickTop[t] : CLOUD_SURFACE
+        effCrag[t] = known ? layout.cragTop[t] : 0
+      }
+      const animate = !!fogOpts?.animate && wasOn
+      if (!animate) { for (let t = 0; t < nTiles; t++) { fogEa[t] = fogE[t]; fogVa[t] = fogV[t] } }
+      fogAnimating = animate
+      syncFogTex()
+      ensureClouds()
+      if (clouds) { clouds.mesh.visible = true; clouds.setExplored(fogEa) }
     },
     dispose() {
       renderer.setAnimationLoop(null)
@@ -323,6 +413,9 @@ export function createWorld(container: HTMLElement, map: GameMap, opts: WorldOpt
       motes.dispose()
       vignette.dispose()
       puffs.dispose()
+      clouds?.dispose()
+      fogTex.dispose()
+      fogShared.uFogOn.value = 0
       sky.dispose()
       post?.dispose()
       env?.dispose()
