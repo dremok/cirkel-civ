@@ -103,6 +103,16 @@ describe('bot', () => {
   })
 })
 
+describe('engine portability', () => {
+  it('uses no Node-only globals, so it runs in the browser too', async () => {
+    const { readdirSync, readFileSync } = await import('node:fs')
+    const dir = new URL('../src/engine/', import.meta.url)
+    for (const f of readdirSync(dir).filter((x) => x.endsWith('.ts'))) {
+      expect(readFileSync(new URL(f, dir), 'utf8'), f).not.toMatch(/\bprocess\.|\brequire\(|\bBuffer\b/)
+    }
+  })
+})
+
 describe('observe', () => {
   it('hides other players plans but shows everything on the board', () => {
     let s = createGame({ seed: 'obs', players: players(2) })

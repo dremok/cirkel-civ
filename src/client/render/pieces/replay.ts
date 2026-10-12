@@ -636,6 +636,23 @@ export function buildReplay(d: ReplayDeps, prev: GameState, events: GameEvent[],
           blockEnd = Math.max(blockEnd, S + 0.9 * k)
           break
         }
+        case 'cityRepair': {
+          const c = shownCity.get(e.city)
+          if (c) c.hp = e.hp
+          tl.add({
+            start: S + 0.05 * k, dur: 0,
+            begin() {
+              const gain = e.hp - (cities.cities.get(e.city)?.hp ?? e.hp)
+              cities.setHp(e.city, e.hp)
+              if (gain > 0) labels.float(`+${gain}`, 'heal', cityHead(e.city), { key: -1 - e.city })
+            },
+          })
+          break
+        }
+        case 'buildFailed': {
+          tl.add({ start: S, dur: 0, fx: true, begin: () => labels.float('Could not build', 'note', cityHead(e.city), { life: 1.6, key: -1 - e.city }) })
+          break
+        }
         case 'heal': {
           tl.add({
             start: S, dur: 0,

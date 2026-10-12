@@ -247,8 +247,8 @@ describe('shooting', () => {
     const e = unit(1, 'spear', T(4, 2), { stance: 'hold' })
     const st = makeState(map, [e], [c, city(1, T(11, 5))])
     const { events } = run(st, {})
-    // City 3 vs spear on hold 4 * 1.5 = 6: round(1.5) = 2.
-    expect(ofKind(events, 'shot')).toEqual([{ t: 7, kind: 'shot', from: { city: c.id }, target: { unit: e.id }, dmg: 2 }])
+    // City 2 vs spear on hold 4 * 1.5 = 6: round(1) = 1.
+    expect(ofKind(events, 'shot')).toEqual([{ t: 7, kind: 'shot', from: { city: c.id }, target: { unit: e.id }, dmg: 1 }])
   })
 
   it('high ground: +1 range from two levels up', () => {
@@ -316,9 +316,10 @@ describe('cities', () => {
     const besieged = city(1, T(8, 2), { hp: 10 })
     const a = unit(0, 'archer', T(7, 2), { stance: 'hold', target: T(8, 2) })
     const st = makeState(map, [a], [hurt, besieged])
-    const { state } = run(st, {})
+    const { state, events } = run(st, {})
     expect(state.cities.find((x) => x.id === hurt.id)!.hp).toBe(13)
     expect(state.cities.find((x) => x.id === besieged.id)!.hp).toBeLessThan(10)
+    expect(ofKind(events, 'cityRepair')).toEqual([{ t: 8, kind: 'cityRepair', city: hurt.id, hp: 13 }])
   })
 
   it('builds when production is enough, carries the rest, keeps the build; settlers cost a citizen', () => {

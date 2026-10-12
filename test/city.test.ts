@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { BUILDINGS, PLOTS, cityOutput, newInterior } from '../src/engine/city.ts'
 import { buildCost, growthNeed, growthThreshold, outputOf } from '../src/engine/economy.ts'
-import { createGame } from '../src/engine/game.ts'
+import { capitalInterior, createGame, rotateInterior } from '../src/engine/game.ts'
 import { scores } from '../src/engine/observe.ts'
 import { resolveTurn } from '../src/engine/rules.ts'
 import type { BuildingType, CityInterior, GameState, PlayerOrders } from '../src/engine/types.ts'
@@ -128,13 +128,14 @@ describe('walls and towers', () => {
 
   it('towers add range and strength on their side only', () => {
     const tower = interior({ [EAST_CORNER]: 'tower' })
-    const east = withCity({ interior: tower }, [unit(1, 'spear', T(8, 2))])
-    const west = withCity({ interior: tower }, [unit(1, 'spear', T(2, 2))])
-    expect(ofKind(resolveTurn(east.st, {}).events, 'shot')).toMatchObject([{ t: 7, from: { city: east.id }, dmg: 3 }])
-    expect(ofKind(resolveTurn(west.st, {}).events, 'shot')).toEqual([])
-    // Within the normal range of 2 on a side without a tower: strength 3, round(2.25) = 2.
-    const plain = withCity({ interior: tower }, [unit(1, 'spear', T(3, 2))])
-    expect(ofKind(resolveTurn(plain.st, {}).events, 'shot')).toMatchObject([{ dmg: 2 }])
+    const east = withCity({ interior: tower }, [unit(1, 'archer', T(8, 2), { stance: 'hold' })])
+    const west = withCity({ interior: tower }, [unit(1, 'archer', T(2, 2), { stance: 'hold' })])
+    // Strength 2 + 1 tower against an archer on hold (2 x 1.5): round(3 x 3 / 3) = 3.
+    expect(ofKind(resolveTurn(east.st, {}).events, 'shot')).toContainEqual(expect.objectContaining({ t: 7, from: { city: east.id }, dmg: 3 }))
+    expect(ofKind(resolveTurn(west.st, {}).events, 'shot').filter((e) => 'city' in e.from)).toEqual([])
+    // Within the normal range of 2 on a side without a tower: strength 2, round(2) = 2.
+    const plain = withCity({ interior: tower }, [unit(1, 'archer', T(3, 2), { stance: 'hold' })])
+    expect(ofKind(resolveTurn(plain.st, {}).events, 'shot')).toContainEqual(expect.objectContaining({ from: { city: plain.id }, dmg: 2 }))
   })
 })
 
@@ -146,6 +147,15 @@ describe('starting cities and score', () => {
       expect(built).toContain('house')
       expect(built.some((b) => b === 'farm' || b === 'sawmill' || b === 'harbor')).toBe(true)
       expect(c.interior.plots[0]).toBeNull()
+    }
+  })
+
+  it('mirrored capitals get mirrored interiors, from the map alone', () => {
+    for (const seed of ['aurora', 'b2', 'c3', 'd4', 'e5', 'f6']) {
+      const s = createGame({ seed, players: [{ name: 'Anna', kind: 'bot' }, { name: 'Lars', kind: 'bot' }] })
+      const [a, b] = s.map.starts
+      expect(capitalInterior(s.map, b)).toEqual(rotateInterior(capitalInterior(s.map, a), 3))
+      expect(s.cities[1].interior).toEqual(capitalInterior(s.map, b))
     }
   })
 

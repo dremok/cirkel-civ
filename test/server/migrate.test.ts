@@ -14,9 +14,10 @@ import type { ServerMessage } from '../../src/shared/protocol.ts'
 const sha = (s: string) => createHash('sha256').update(s).digest('hex')
 
 /** A game as the v1 server saved it: cities without interiors, 'walls' builds, stray fields. */
-function v1Save(id = 'old1') {
+function v1Save(id = 'old1', extra: (state: any) => void = () => {}) {
   const config = { seed: 'migrate-me', players: [{ name: 'A', kind: 'human' as const }, { name: 'B', kind: 'human' as const }, { name: 'Bot 3', kind: 'bot' as const }] }
   const state: any = createGame(config)
+  extra(state)
   for (const c of state.cities) {
     delete c.interior
     c.legacy = 'dropped on migration'
@@ -61,11 +62,12 @@ describe('migrate', () => {
     expect(from).toBe(1)
     expect(rec.schemaVersion).toBe(SCHEMA_VERSION)
     expect('somethingRemoved' in rec).toBe(false)
+    // Capitals get exactly the interior a fresh game gives them.
+    const fresh = createGame(rec.config!)
     for (const s of [rec.state!, rec.previous!]) {
       for (const c of s.cities) {
+        expect(c.interior).toEqual(fresh.cities.find((f) => f.tile === c.tile)!.interior)
         expect(c.interior.plots).toHaveLength(PLOT_COUNT)
-        expect(c.interior.plots.filter((p) => p === 'house')).toHaveLength(1)
-        expect(c.interior.focus).toBe('balance')
         expect(c.walls).toBe(false) // derived from the interior, which has no wall
         expect('legacy' in c).toBe(false)
       }
@@ -75,6 +77,22 @@ describe('migrate', () => {
     const found = rec.events[1] as Extract<(typeof rec.events)[number], { kind: 'found' }>
     expect(found.city.interior.plots).toHaveLength(PLOT_COUNT)
     expect(rec.orders[0].cities[rec.state!.cities[0].id]).toBeNull()
+  })
+
+  it('gives a non-capital the one-House interior of a newly founded city', () => {
+    const raw = v1Save('old2', (state) => state.cities.push({ ...structuredClone(state.cities[1]), id: 900, capital: false, tile: state.units[0].tile }))
+    const city = migrate(raw).rec.state!.cities.find((c) => c.id === 900)!
+    expect(city.interior.plots.filter((p) => p !== null)).toEqual(['house'])
+    expect(city.capital).toBe(false)
+  })
+
+  it('gives 2-player capitals the mirrored interiors of a fresh game', () => {
+    const config = { seed: 'mirror', players: [{ name: 'A', kind: 'human' as const }, { name: 'B', kind: 'bot' as const }] }
+    const raw: any = { ...v1Save(), config, state: createGame(config), previous: null, events: [], orders: {} }
+    raw.seats = raw.seats.slice(0, 2)
+    for (const c of raw.state.cities) delete c.interior
+    const fresh = createGame(config)
+    expect(migrate(raw).rec.state!.cities.map((c) => c.interior)).toEqual(fresh.cities.map((c) => c.interior))
   })
 
   it('is idempotent and keeps an interior that is already there', () => {

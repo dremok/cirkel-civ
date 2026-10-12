@@ -24,6 +24,7 @@ export const NATURE = {
   oak: '#35764B', oakLight: '#539856', olive: '#58783C', oliveLight: '#7E9A4C',
   birch: '#8DB552', birchLight: '#B4CF6A', birchBark: '#EEE9DF', gold: '#D9A43A', goldLight: '#EEC65C',
   fern: '#5E9A4C', moss: '#74885A', mushroom: '#C8463A', mushroomCream: '#E9DCC4', log: '#7A5A44', reed: '#8FA65A', cattail: '#7B5638',
+  heather: '#8A6A83', heatherLight: '#AC8CA6', heatherStem: '#6E7A4C',
   poppy: '#D9473A', lavender: '#A58BD0', buttercup: '#F2CC4A', daisy: '#F6F1E6', clover: '#5E9449',
   skyZenith: '#8FB8D8', skyHorizon: '#F3E3CC',
   sun: '#FFD7A0', skyFill: '#A6B2DE', groundBounce: '#E2C9C2',

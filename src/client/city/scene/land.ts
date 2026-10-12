@@ -5,29 +5,20 @@
 import * as THREE from 'three'
 import { BIOME, NATURE } from '../../render/palette.ts'
 import type { Biome } from '../../../engine/types.ts'
-import { TerrainBuilder, buildColumn, corner } from './column.ts'
-import { broadleaf, birch, bush, flowers, model, pine, rock, sheep, tuft, wheat } from './flora.ts'
+import { TerrainBuilder, buildColumn, corner, groundFlavour, vnoise } from './column.ts'
+import { broadleaf, birch, bush, clover, fern, flowers, log, model, mossyRock, mushroom, oak, pine, reeds, rock, sheep, spruce, tuft, wheat, wildflowers } from './flora.ts'
 import { type RGB, hash, lin, mix, rng, shade } from './geo.ts'
 import { KERB_EDGE } from './board.ts'
 import { BOARD_IN, BOARD_R, BOTTOM_Y, type CityLayout, type Neighbour, hexSdf } from './layout.ts'
 import { cityDepthMaterial, cityMaterial } from './mat.ts'
 
-type PropKind = 'pine' | 'broad' | 'autumn' | 'birch' | 'bush' | 'tuft' | 'dryTuft' | 'flowerA' | 'flowerB' | 'flowerC' | 'wheat' | 'rock' | 'sheep'
+type PropKind = 'pine' | 'spruce' | 'oak' | 'olive' | 'broad' | 'autumn' | 'gold' | 'birch' | 'bush' | 'tuft' | 'dryTuft' | 'flowerA' | 'flowerB' | 'flowerC'
+  | 'poppy' | 'lavender' | 'buttercup' | 'daisy' | 'clover' | 'fern' | 'mushroom' | 'log' | 'reeds' | 'wheat' | 'rock' | 'mossRock' | 'sheep'
 
 export interface Placed { kind: PropKind; x: number; y: number; z: number; s: number; rot: number; tint?: number }
 
-function topColor(biome: Biome, x: number, z: number, seed: number, moisture: number): RGB {
-  const w = 0.5 + 0.5 * Math.sin(x * 0.55 + seed) * Math.cos(z * 0.5 - seed * 0.7)
-  switch (biome) {
-    case 'grass': return mix(lin(BIOME.grass.light), lin(BIOME.grass.base), 0.35 + 0.4 * w * Math.min(1, moisture + 0.3))
-    case 'plains': return mix(lin(BIOME.plains.light), lin(BIOME.plains.base), 0.3 + 0.5 * w)
-    case 'forest': return mix(lin(BIOME.forest.base), lin(BIOME.forest.dark), 0.3 * w)
-    case 'hills': return mix(lin(BIOME.hills.base), lin(BIOME.hills.light), 0.2 + 0.5 * w)
-    case 'mountain': return mix(lin(BIOME.mountain.base), lin(BIOME.mountain.light), 0.3 * w)
-    case 'snow': return lin(BIOME.snow.base)
-    case 'beach': return mix(lin(BIOME.beach.base), lin(BIOME.beach.light), 0.3 + 0.4 * w)
-    default: return mix(lin(BIOME.beach.base), lin(BIOME.beach.dark), 0.4 + 0.3 * w)
-  }
+function topColor(biome: Biome, x: number, z: number, _seed: number, moisture: number): RGB {
+  return groundFlavour(biome, x, z, moisture)
 }
 
 /** Centres of the seven columns (city first), for "what is across this edge". */
@@ -89,15 +80,6 @@ function heightFn(layout: CityLayout, n: Neighbour): (x: number, z: number) => n
   return () => n.top
 }
 
-/** Smooth value noise in [0, 1). */
-function vnoise(x: number, z: number, seed: number): number {
-  const ix = Math.floor(x), iz = Math.floor(z)
-  const fx = x - ix, fz = z - iz
-  const u = fx * fx * (3 - 2 * fx), v = fz * fz * (3 - 2 * fz)
-  const h = (a: number, b: number) => hash(a * 7919 + b * 104729, seed)
-  return (h(ix, iz) * (1 - u) + h(ix + 1, iz) * u) * (1 - v) + (h(ix, iz + 1) * (1 - u) + h(ix + 1, iz + 1) * u) * v
-}
-
 function scatter(layout: CityLayout, n: Neighbour, h: (x: number, z: number) => number, density: number): Placed[] {
   const out: Placed[] = []
   const r = rng((n.tile ?? 0) * 131 + 17)
@@ -121,47 +103,75 @@ function scatter(layout: CityLayout, n: Neighbour, h: (x: number, z: number) => 
     if (p) out.push({ kind, x: p.x, z: p.z, y: h(p.x, p.z) - 0.01, s, rot: r() * Math.PI * 2, tint })
     return p
   }
+  /** A drift of one kind of small plant around a free spot. */
+  const drift = (kind: PropKind, count: number, rad: number, scale = 1) => {
+    const c = spot(0.08, 0.25)
+    if (!c) return
+    for (let i = 0; i < count; i++) {
+      const a = r() * Math.PI * 2, d = Math.sqrt(r()) * rad
+      const x = c.x + Math.cos(a) * d, z = c.z + Math.sin(a) * d
+      if (hexSdf(x - n.cx, z - n.cz, BOARD_IN) > -0.15) continue
+      out.push({ kind, x, z, y: h(x, z) - 0.005, s: scale * (0.8 + r() * 0.5), rot: r() * 6.28 })
+    }
+  }
+  const D = (k: number) => Math.round(k * density)
+  const shore = (x: number, z: number) => layout.neighbours.some((o) => o.water && o.tile !== null && hexSdf(x - o.cx, z - o.cz, BOARD_IN) < 0.6)
   const crags = b === 'mountain' || b === 'snow'
   if (crags) {
-    for (let i = 0; i < Math.round(26 * density); i++) put('rock', 0.2, 0.25 + r() * 0.35, 0.1, 0.95 + r() * 0.1)
-    if (b === 'mountain') for (let i = 0; i < Math.round(20 * density); i++) put('pine', 0.18, 0.45 + r() * 0.3, 0.15)
-    for (let i = 0; i < Math.round(30 * density); i++) put('dryTuft', 0.05, 0.8 + r() * 0.4)
+    for (let i = 0; i < D(26); i++) put(r() < 0.6 ? 'mossRock' : 'rock', 0.2, 0.25 + r() * 0.35, 0.1, 0.95 + r() * 0.1)
+    if (b === 'mountain') for (let i = 0; i < D(20); i++) put(r() < 0.6 ? 'spruce' : 'pine', 0.18, 0.45 + r() * 0.3, 0.15)
+    for (let i = 0; i < D(30); i++) put('dryTuft', 0.05, 0.8 + r() * 0.4)
+    for (let i = 0; i < D(4); i++) drift('lavender', 6, 0.3)
   } else if (b === 'forest') {
-    const piney = n.height >= 4 ? 0.75 : 0.3
+    // a mixed wood: teal pines and spruce up high, emerald oak, olive and birch lower down, a few in autumn gold and rust
+    const piney = n.height >= 4 ? 0.7 : 0.28
     for (let i = 0; i < Math.round(230 * Math.max(0.7, density)); i++) {
       const pineT = r() < piney
-      const s = pineT ? 0.75 + r() * 0.5 : 0.7 + r() * 0.4
-      const kind: PropKind = pineT ? 'pine' : r() < 0.06 ? 'autumn' : r() < 0.1 ? 'birch' : 'broad'
+      const s = pineT ? 0.75 + r() * 0.5 : 0.7 + r() * 0.45
+      const k2 = r()
+      const kind: PropKind = pineT ? (k2 < 0.45 ? 'spruce' : 'pine') : k2 < 0.04 ? 'autumn' : k2 < 0.08 ? 'gold' : k2 < 0.2 ? 'birch' : k2 < 0.55 ? 'oak' : k2 < 0.8 ? 'olive' : 'broad'
       put(kind, 0.24 * s, s, 0.2, 0.9 + r() * 0.2)
     }
-    for (let i = 0; i < Math.round(40 * density); i++) put('bush', 0.1, 0.9 + r() * 0.5)
-    for (let i = 0; i < Math.round(70 * density); i++) put('tuft', 0.05, 0.8 + r() * 0.5)
+    for (let i = 0; i < D(40); i++) put(r() < 0.5 ? 'fern' : 'bush', 0.1, 0.9 + r() * 0.5)
+    for (let i = 0; i < D(14); i++) put('mushroom', 0.05, 0.9 + r() * 0.5)
+    for (let i = 0; i < D(6); i++) put('log', 0.25, 0.9 + r() * 0.4)
+    for (let i = 0; i < D(8); i++) put('mossRock', 0.12, 0.14 + r() * 0.16)
+    for (let i = 0; i < D(60); i++) put('tuft', 0.05, 0.8 + r() * 0.5)
   } else if (b === 'grass') {
-    for (let i = 0; i < Math.round(7 * density); i++) put(r() < 0.3 ? 'birch' : r() < 0.08 ? 'autumn' : 'broad', 0.3, 0.7 + r() * 0.35, 0.3)
-    for (let i = 0; i < Math.round(10 * density); i++) put('bush', 0.12, 0.8 + r() * 0.5)
-    for (let i = 0; i < Math.round(5 * density); i++) put('sheep', 0.2, 1 + r() * 0.15, 0.6)
-    for (let i = 0; i < Math.round(160 * density); i++) put('tuft', 0.05, 0.8 + r() * 0.6)
-    for (let i = 0; i < Math.round(70 * density); i++) put((['flowerA', 'flowerB', 'flowerC'] as const)[Math.floor(r() * 3)], 0.05, 0.9 + r() * 0.5)
+    for (let i = 0; i < D(7); i++) put(r() < 0.3 ? 'birch' : r() < 0.1 ? 'gold' : 'oak', 0.3, 0.6 + r() * 0.35, 0.3)
+    for (let i = 0; i < D(10); i++) put('bush', 0.12, 0.8 + r() * 0.5)
+    for (let i = 0; i < D(5); i++) put('sheep', 0.2, 1 + r() * 0.15, 0.6)
+    for (let i = 0; i < D(140); i++) put('tuft', 0.05, 0.8 + r() * 0.6)
+    // wildflowers come in drifts: poppy, lavender, buttercup, daisy
+    const kinds: PropKind[] = ['poppy', 'lavender', 'buttercup', 'daisy']
+    for (let i = 0; i < D(16); i++) drift(kinds[Math.floor(r() * 4)], 5 + Math.floor(r() * 5), 0.35)
+    for (let i = 0; i < D(12); i++) drift('clover', 3, 0.2)
   } else if (b === 'plains') {
-    for (let i = 0; i < Math.round(150 * density); i++) put('wheat', 0.09, 0.9 + r() * 0.5)
-    for (let i = 0; i < Math.round(60 * density); i++) put('dryTuft', 0.05, 0.8 + r() * 0.5)
-    for (let i = 0; i < Math.round(6 * density); i++) put('rock', 0.1, 0.12 + r() * 0.12)
-    for (let i = 0; i < Math.round(2 * density); i++) put('broad', 0.3, 0.7 + r() * 0.3, 0.4)
+    for (let i = 0; i < D(150); i++) put('wheat', 0.09, 0.9 + r() * 0.5)
+    for (let i = 0; i < D(50); i++) put('dryTuft', 0.05, 0.8 + r() * 0.5)
+    for (let i = 0; i < D(6); i++) drift('poppy', 6, 0.3)
+    for (let i = 0; i < D(3); i++) drift('buttercup', 5, 0.3)
+    for (let i = 0; i < D(6); i++) put('mossRock', 0.1, 0.12 + r() * 0.12)
+    for (let i = 0; i < D(2); i++) put('gold', 0.3, 0.6 + r() * 0.3, 0.4)
   } else if (b === 'hills') {
-    for (let i = 0; i < Math.round(18 * density); i++) put('rock', 0.18, 0.16 + r() * 0.3)
-    for (let i = 0; i < Math.round(14 * density); i++) put('pine', 0.22, 0.6 + r() * 0.35)
-    for (let i = 0; i < Math.round(12 * density); i++) put('bush', 0.1, 0.8 + r() * 0.4)
-    for (let i = 0; i < Math.round(90 * density); i++) put('dryTuft', 0.05, 0.8 + r() * 0.5)
+    for (let i = 0; i < D(18); i++) put(r() < 0.6 ? 'mossRock' : 'rock', 0.18, 0.16 + r() * 0.3)
+    for (let i = 0; i < D(14); i++) put(r() < 0.5 ? 'spruce' : 'pine', 0.22, 0.6 + r() * 0.35)
+    for (let i = 0; i < D(12); i++) put('bush', 0.1, 0.8 + r() * 0.4)
+    for (let i = 0; i < D(80); i++) put('dryTuft', 0.05, 0.8 + r() * 0.5)
+    for (let i = 0; i < D(8); i++) drift('lavender', 7, 0.4)
   } else if (b === 'beach') {
-    for (let i = 0; i < Math.round(10 * density); i++) put('rock', 0.12, 0.1 + r() * 0.18)
-    for (let i = 0; i < Math.round(50 * density); i++) put('dryTuft', 0.05, 0.7 + r() * 0.4)
+    for (let i = 0; i < D(10); i++) put('mossRock', 0.12, 0.1 + r() * 0.18)
+    for (let i = 0; i < D(40); i++) put('dryTuft', 0.05, 0.7 + r() * 0.4)
+    for (let i = 0; i < D(30); i++) { const p = spot(0.06, 0.1); if (p && shore(p.x, p.z)) out.push({ kind: 'reeds', x: p.x, z: p.z, y: h(p.x, p.z) - 0.01, s: 0.9 + r() * 0.5, rot: r() * 6.28 }) }
   } else if (n.water) {
-    // a few rocks in the shallows, just breaking the surface near the shore
-    for (let i = 0; i < Math.round(8 * density); i++) {
-      const p = spot(0.15, 0.3)
+    // rocks and reeds in the shallows, just breaking the surface near the shore
+    for (let i = 0; i < D(40); i++) {
+      const p = spot(0.08, 0.3)
       if (!p) continue
-      if (landDist(layout, p.x, p.z) > 1.4) continue
-      out.push({ kind: 'rock', x: p.x, z: p.z, y: h(p.x, p.z), s: 0.25 + r() * 0.25, rot: r() * 6.28 })
+      const dl = landDist(layout, p.x, p.z)
+      if (dl > 1.4) continue
+      if (dl < 0.5 && r() < 0.7) out.push({ kind: 'reeds', x: p.x, z: p.z, y: layout.waterY - 0.06, s: 1 + r() * 0.5, rot: r() * 6.28 })
+      else if (i % 4 === 0) out.push({ kind: 'mossRock', x: p.x, z: p.z, y: h(p.x, p.z), s: 0.25 + r() * 0.25, rot: r() * 6.28 })
     }
   }
   return out
@@ -192,7 +202,7 @@ function scatterOutskirts(layout: CityLayout): Placed[] {
     return false
   }
   const b = layout.biome
-  const small: PropKind[] = b === 'plains' ? ['wheat', 'dryTuft', 'wheat'] : b === 'beach' ? ['dryTuft'] : b === 'hills' ? ['dryTuft', 'tuft'] : ['tuft', 'tuft', 'flowerA', 'flowerB', 'flowerC']
+  const small: PropKind[] = b === 'plains' ? ['wheat', 'dryTuft', 'wheat', 'poppy'] : b === 'beach' ? ['dryTuft'] : b === 'hills' ? ['dryTuft', 'tuft', 'lavender'] : ['tuft', 'tuft', 'clover', 'poppy', 'lavender', 'buttercup', 'daisy']
   for (let i = 0; i < 220; i++) {
     const x = (r() * 2 - 1) * BOARD_R, z = (r() * 2 - 1) * BOARD_R
     if (hexSdf(x, z, BOARD_IN) > -0.15) continue
@@ -209,8 +219,8 @@ function scatterOutskirts(layout: CityLayout): Placed[] {
       const d = 4.55 + r() * 0.5, aa = a + (r() - 0.5) * 0.18
       const x = Math.cos(aa) * d, z = Math.sin(aa) * d
       if (hexSdf(x, z, BOARD_IN) > -0.3 || nearTown(x, z, 0.5)) continue
-      const kind: PropKind = b === 'hills' ? (r() < 0.6 ? 'pine' : 'rock') : r() < 0.35 ? 'bush' : r() < 0.5 ? 'birch' : 'broad'
-      out.push({ kind, x, y: -0.01, z, s: kind === 'bush' ? 1.1 + r() * 0.4 : kind === 'rock' ? 0.2 + r() * 0.2 : 0.6 + r() * 0.25, rot: r() * 6.28 })
+      const kind: PropKind = b === 'hills' ? (r() < 0.6 ? 'spruce' : 'mossRock') : r() < 0.3 ? 'bush' : r() < 0.45 ? 'birch' : r() < 0.6 ? 'gold' : 'oak'
+      out.push({ kind, x, y: -0.01, z, s: kind === 'bush' ? 1.1 + r() * 0.4 : kind === 'mossRock' ? 0.2 + r() * 0.2 : 0.55 + r() * 0.25, rot: r() * 6.28 })
     }
   }
   return out
@@ -320,8 +330,22 @@ export function buildLand(layout: CityLayout, density = 1): Land {
   // Instanced vegetation.
   const geos: Record<PropKind, THREE.BufferGeometry> = {
     pine: model((k) => pine(k)),
+    spruce: model((k) => spruce(k)),
+    oak: model((k) => oak(k)),
+    olive: model((k) => oak(k, NATURE.olive, NATURE.oliveLight, 5)),
     broad: model((k) => broadleaf(k)),
     autumn: model((k) => broadleaf(k, NATURE.rust, NATURE.amber, 4)),
+    gold: model((k) => oak(k, NATURE.gold, NATURE.goldLight, 8)),
+    poppy: model((k) => wildflowers(k, NATURE.poppy, 1)),
+    lavender: model((k) => wildflowers(k, NATURE.lavender, 2)),
+    buttercup: model((k) => wildflowers(k, NATURE.buttercup, 3)),
+    daisy: model((k) => wildflowers(k, NATURE.daisy, 4)),
+    clover: model((k) => clover(k)),
+    fern: model((k) => fern(k)),
+    mushroom: model((k) => mushroom(k)),
+    log: model((k) => log(k)),
+    reeds: model((k) => reeds(k)),
+    mossRock: model((k) => mossyRock(k, 5)),
     birch: model((k) => birch(k)),
     bush: model((k) => bush(k, BIOME.forest.base, 7)),
     tuft: model((k) => tuft(k)),
@@ -352,10 +376,10 @@ export function buildLand(layout: CityLayout, density = 1): Land {
     const kind = k0 as PropKind
     const im = new THREE.InstancedMesh(geos[kind], vegMat, list.length)
     im.name = `land-${key}`
-    const big = kind === 'pine' || kind === 'broad' || kind === 'autumn' || kind === 'birch' || kind === 'rock' || kind === 'sheep' || kind === 'bush'
+    const big = kind === 'pine' || kind === 'spruce' || kind === 'oak' || kind === 'olive' || kind === 'gold' || kind === 'broad' || kind === 'autumn' || kind === 'birch' || kind === 'rock' || kind === 'mossRock' || kind === 'sheep' || kind === 'bush' || kind === 'log'
     im.castShadow = big && zone === 'near'
     im.receiveShadow = true
-    if (big && kind !== 'rock') im.customDepthMaterial = depth
+    if (big && kind !== 'rock' && kind !== 'mossRock' && kind !== 'log') im.customDepthMaterial = depth
     list.forEach((p, i) => {
       m4.compose(v.set(p.x, p.y, p.z), q.setFromAxisAngle(up, p.rot), s.setScalar(p.s))
       im.setMatrixAt(i, m4)
@@ -467,6 +491,15 @@ float sHex(vec2 p, float r) {
         diffuseColor.rgb = mix(wCol, uFoam, wFoam);
         diffuseColor.a = mix(wAlpha, 1.0, wFoam);`)
         .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nroughnessFactor = mix(roughnessFactor, 0.85, wFoam);')
+        .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
+        {
+          // sun glints: tiny bright sparkles drifting on the open water (the bloom makes them glow)
+          vec2 gp = vWorldP.xz;
+          float g1 = cNoise(gp * 9.0 + vec2(uTime * 0.6, -uTime * 0.4));
+          float g2 = cNoise(gp * 14.0 - vec2(uTime * 0.5, uTime * 0.7));
+          float glint = smoothstep(0.86, 0.98, g1) * smoothstep(0.8, 0.97, g2) * (1.0 - wFoam) * smoothstep(0.1, 0.6, shore);
+          totalEmissiveRadiance += vec3(1.0, 0.86, 0.62) * glint * 2.6;
+        }`)
         .replace('#include <normal_fragment_maps>', /* glsl */ `#include <normal_fragment_maps>
         {
           vec2 p = vWorldP.xz; float t = uTime; vec2 g = vec2(0.0);

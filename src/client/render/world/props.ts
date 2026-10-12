@@ -15,7 +15,7 @@ type Kind =
   | 'pine' | 'oak' | 'olive' | 'birch' | 'gold' | 'rust' | 'bush'
   | 'fern' | 'mushroom' | 'log' | 'reed'
   | 'poppy' | 'lavender' | 'buttercup' | 'daisy' | 'clover' | 'tuft' | 'wheat'
-  | 'rock' | 'stone' | 'lily' | 'blob'
+  | 'rock' | 'stone' | 'lily' | 'outcrop' | 'heather' | 'blob'
 
 type RGB = [number, number, number]
 
@@ -30,12 +30,12 @@ const WIND: Record<Kind, number> = {
   pine: 0.02, oak: 0.024, olive: 0.024, birch: 0.03, gold: 0.024, rust: 0.024, bush: 0.012,
   fern: 0.02, mushroom: 0, log: 0, reed: 0.04,
   poppy: 0.016, lavender: 0.016, buttercup: 0.016, daisy: 0.016, clover: 0, tuft: 0.018, wheat: 0.026,
-  rock: 0, stone: 0, lily: 0, blob: 0,
+  rock: 0, stone: 0, lily: 0, outcrop: 0, heather: 0.008, blob: 0,
 }
 /** Soft contact shadow radius under a prop, relative to its scale (0 = none). */
-const BLOB: Partial<Record<Kind, number>> = { pine: 0.4, oak: 0.5, olive: 0.5, birch: 0.36, gold: 0.5, rust: 0.5, bush: 0.5, log: 0.55, wheat: 0.34, rock: 0.62 }
+const BLOB: Partial<Record<Kind, number>> = { pine: 0.4, oak: 0.5, olive: 0.5, birch: 0.36, gold: 0.5, rust: 0.5, bush: 0.5, log: 0.55, wheat: 0.34, rock: 0.62, outcrop: 0.7 }
 /** Kinds that cast shadows (small ground cover does not). */
-const CASTS = new Set<Kind>(['pine', 'oak', 'olive', 'birch', 'gold', 'rust', 'bush', 'log', 'wheat', 'rock', 'reed'])
+const CASTS = new Set<Kind>(['pine', 'oak', 'olive', 'birch', 'gold', 'rust', 'bush', 'log', 'wheat', 'rock', 'reed', 'outcrop'])
 /** Foliage: sunlight glows softly through it. */
 const LEAFY = new Set<Kind>(['pine', 'oak', 'olive', 'birch', 'gold', 'rust', 'bush', 'fern', 'reed', 'tuft', 'wheat'])
 /** Thin, flat parts seen from both sides. */
@@ -367,6 +367,48 @@ function lilyGeometry(): THREE.BufferGeometry {
   return mergeGeometries(parts.map((g) => (g.index ? g.toNonIndexed() : g)))
 }
 
+/** A rock outcrop breaking through the turf: a few tilted, half-buried slabs with lichen on top. */
+function outcropGeometry(): THREE.BufferGeometry {
+  const c = lin(NATURE.rock), light = lin(BIOME.mountain.light), dark = lin(BIOME.mountain.dark), lichen = lin('#C9C69A'), moss = lin(NATURE.moss)
+  const parts: THREE.BufferGeometry[] = []
+  const slabs = [
+    { x: 0, z: 0, s: [1, 0.42, 0.62], tilt: 0.35, rot: 0.2 },
+    { x: 0.42, z: 0.22, s: [0.6, 0.34, 0.45], tilt: 0.5, rot: 1.1 },
+    { x: -0.38, z: 0.18, s: [0.55, 0.26, 0.4], tilt: 0.25, rot: 2.2 },
+    { x: 0.1, z: -0.36, s: [0.45, 0.2, 0.32], tilt: 0.15, rot: 3.0 },
+  ]
+  slabs.forEach((sl, i) => {
+    const g = new THREE.IcosahedronGeometry(0.5, 0)
+    jitter(g, 0.22, 210 + i)
+    g.scale(sl.s[0], sl.s[1], sl.s[2])
+    g.rotateZ(sl.tilt)
+    g.rotateY(sl.rot)
+    g.translate(sl.x, 0.05, sl.z)
+    parts.push(paint(g, (x, y, z, ny) => {
+      const h = hash01(Math.round((x * 3 + z) * 600), 220 + i)
+      if (ny > 0.7 && h > 0.45) return h > 0.8 ? lichen : mix3(moss, c, 0.4)
+      return mix3(dark, light, THREE.MathUtils.clamp(0.3 + ny * 0.4 + y * 0.8 + h * 0.15, 0, 1))
+    }))
+  })
+  return mergeGeometries(parts)
+}
+
+/** Heather: a low cushion of tiny mauve and pink domes on wiry green. */
+function heatherGeometry(): THREE.BufferGeometry {
+  const c0 = lin(NATURE.heather), c1 = lin(NATURE.heatherLight), stem = lin(NATURE.heatherStem)
+  const parts: THREE.BufferGeometry[] = []
+  for (let i = 0; i < 7; i++) {
+    const a = hash01(i, 230) * Math.PI * 2, d = i === 0 ? 0 : 0.18 + hash01(i, 231) * 0.22
+    const r = 0.16 + hash01(i, 232) * 0.1
+    const g = new THREE.IcosahedronGeometry(r, 0)
+    jitter(g, r * 0.3, 240 + i)
+    g.scale(1, 0.7, 1)
+    g.translate(Math.cos(a) * d, r * 0.5, Math.sin(a) * d)
+    parts.push(paint(g, (_x, y, _z, ny) => (ny < -0.2 || y < 0.04 ? stem : mix3(c0, c1, THREE.MathUtils.clamp(0.3 + ny * 0.5 + hash01(i, 233) * 0.3, 0, 1)))))
+  }
+  return mergeGeometries(parts)
+}
+
 /** A faceted boulder; mossy ones carry moss and lichen on their upward faces. */
 function rockGeometry(seed: number, mossy: boolean): THREE.BufferGeometry {
   const ico = new THREE.IcosahedronGeometry(0.5, 0)
@@ -460,6 +502,21 @@ function place(layout: Layout, quality: WorldQuality): Map<Kind, Prop[]> {
       }
       return null
     }
+    /** Positions for a small cluster of n little things around a free spot (outside the centre disc). */
+    const cluster = (n: number, spread: number, rad: number) => {
+      const c = spot(spread * 0.7, 0.05)
+      const out: { x: number; z: number }[] = []
+      if (!c) return out
+      const lx = c.x - x0, lz = c.z - z0
+      for (let i = 0; i < n * 3 && out.length < n; i++) {
+        const a = rnd() * Math.PI * 2, d = Math.sqrt(rnd()) * spread
+        const x = lx + Math.cos(a) * d, z = lz + Math.sin(a) * d
+        if (Math.hypot(x, z) < 0.38 + rad * 0.5 || hexSdf(x, z) > -0.04 - rad) continue
+        if (out.some((o) => Math.hypot(o.x - x0 - x, o.z - z0 - z) < rad * 1.2)) continue
+        out.push({ x: x0 + x, z: z0 + z })
+      }
+      return out
+    }
     const tint = (base: number, spread: number) => new THREE.Color().setScalar(base + (rnd() - 0.5) * spread)
     const warmTint = (base: number, spread: number) => { const c = tint(base, spread); c.r *= 1.04; c.b *= 0.94; return c }
     const b = t.biome
@@ -467,12 +524,11 @@ function place(layout: Layout, quality: WorldQuality): Map<Kind, Prop[]> {
       // Drifts: a broad noise decides where flowers gather and which colour leads there.
       const drift = vnoise(x0 * 0.22, z0 * 0.22, 21)
       const lead = FLOWERS[Math.floor(vnoise(x0 * 0.13 + 9, z0 * 0.13, 22) * 3.999)]
-      const count = drift > 0.58 ? n + Math.floor(rnd() * 4) : Math.floor(rnd() * 1.6)
-      for (let i = 0; i < count; i++) {
-        const p = spot(0.06, 0.04)
-        if (!p) continue
+      // Flowers grow in little patches of one colour, more of them where the drift gathers.
+      const patches = drift > 0.58 ? 1 + Math.floor(rnd() * 2) + (n > 3 ? 1 : 0) : rnd() < 0.35 ? 1 : 0
+      for (let c = 0; c < patches; c++) {
         const kind = rnd() < 0.75 ? lead : FLOWERS[Math.floor(rnd() * 4)]
-        add(kind, id, p.x, p.z, size * (0.8 + rnd() * 0.45), rnd() * 6.28, tint(1, 0.12))
+        for (const p of cluster(2 + Math.floor(rnd() * 3), 0.13, 0.05)) add(kind, id, p.x, p.z, size * (0.75 + rnd() * 0.45), rnd() * 6.28, tint(1, 0.12))
       }
     }
     const tree = (pine: number, birch: number) => {
@@ -505,17 +561,20 @@ function place(layout: Layout, quality: WorldQuality): Map<Kind, Prop[]> {
     } else if (b === 'grass') {
       if (rnd() < 0.16) tree(0.1, 0.4)
       if (rnd() < 0.22) { const p = spot(0.11, 0.05); if (p) add('bush', id, p.x, p.z, 0.24 + rnd() * 0.1, rnd() * 6.28, warmTint(1.05, 0.14)) }
-      const n = (lite ? 3 : 5) + Math.floor(rnd() * 4)
-      for (let i = 0; i < n; i++) { const p = spot(0.06, 0.04); if (p) add('tuft', id, p.x, p.z, 0.1 + rnd() * 0.08, rnd() * 6.28, tint(1, 0.18)) }
+      // Tufts gather in clumps, with a few strays between them.
+      for (let c = 0; c < (lite ? 1 : 2) + Math.floor(rnd() * 2); c++) for (const p of cluster(3 + Math.floor(rnd() * 3), 0.14, 0.05)) add('tuft', id, p.x, p.z, 0.09 + rnd() * 0.08, rnd() * 6.28, tint(1, 0.18))
+      for (let i = 0; i < 2; i++) { const p = spot(0.05, 0.04); if (p) add('tuft', id, p.x, p.z, 0.08 + rnd() * 0.05, rnd() * 6.28, tint(1, 0.18)) }
       if (!lite) {
         for (let i = 0; i < 1 + Math.floor(rnd() * 2.5); i++) { const p = spot(0.08, 0.04); if (p) add('clover', id, p.x, p.z, 0.16 + rnd() * 0.08, rnd() * 6.28, tint(1, 0.15)) }
         flowersHere(rich ? 4 : 2, 0.12)
       }
       if (rnd() < 0.12) { const p = spot(0.06, 0.05); if (p) add('rock', id, p.x, p.z, 0.08 + rnd() * 0.05, rnd() * 6.28, tint(1, 0.1)) }
     } else if (b === 'plains') {
-      const n = (lite ? 3 : 5) + Math.floor(rnd() * 3)
-      for (let i = 0; i < n; i++) { const p = spot(0.1, 0.04); if (p) add('wheat', id, p.x, p.z, 0.2 + rnd() * 0.08, rnd() * 6.28, warmTint(1.05, 0.1)) }
-      if (!lite && rnd() < 0.45) for (let i = 0; i < 2 + Math.floor(rnd() * 3); i++) { const p = spot(0.05, 0.04); if (p) add('poppy', id, p.x, p.z, 0.1 + rnd() * 0.03, rnd() * 6.28, tint(1, 0.1)) }
+      // Stooks stand in little groups, as if left by the harvest.
+      for (let c = 0; c < (lite ? 1 : 2); c++) for (const p of cluster(2 + Math.floor(rnd() * 3), 0.2, 0.09)) add('wheat', id, p.x, p.z, 0.19 + rnd() * 0.08, rnd() * 6.28, warmTint(1.05, 0.1))
+      if (rnd() < 0.5) { const p = spot(0.1, 0.04); if (p) add('wheat', id, p.x, p.z, 0.18 + rnd() * 0.06, rnd() * 6.28, warmTint(1.05, 0.1)) }
+      if (!lite && rnd() < 0.45) for (const p of cluster(3 + Math.floor(rnd() * 3), 0.12, 0.05)) add('poppy', id, p.x, p.z, 0.1 + rnd() * 0.03, rnd() * 6.28, tint(1, 0.1))
+      if (!lite) for (const p of cluster(2 + Math.floor(rnd() * 3), 0.12, 0.05)) add('tuft', id, p.x, p.z, 0.08 + rnd() * 0.05, rnd() * 6.28, new THREE.Color(1.2, 1.08, 0.66))
       for (let i = 0; i < (lite ? 0 : 2); i++) { const p = spot(0.03, 0.04); if (p) add('stone', id, p.x, p.z, 0.035 + rnd() * 0.025, rnd() * 6.28, warmTint(1.05, 0.12)) }
     } else if (b === 'hills') {
       // Upland: mossy boulders, pebbles, heath tufts, now and then a wind-bent pine or a bush.
@@ -524,9 +583,9 @@ function place(layout: Layout, quality: WorldQuality): Map<Kind, Prop[]> {
       for (let i = 0; i < (lite ? 1 : 3); i++) { const p = spot(0.04, 0.04); if (p) add('stone', id, p.x, p.z, 0.04 + rnd() * 0.04, rnd() * 6.28, tint(0.95, 0.12)) }
       if (rnd() < 0.3) tree(0.85, 0.1)
       if (rnd() < 0.25) { const p = spot(0.11, 0.05); if (p) add('bush', id, p.x, p.z, 0.22 + rnd() * 0.08, rnd() * 6.28, new THREE.Color(1.08, 1.0, 0.8)) }
-      const nt = lite ? 2 : 5
-      for (let i = 0; i < nt; i++) { const p = spot(0.05, 0.04); if (p) add('tuft', id, p.x, p.z, 0.09 + rnd() * 0.05, rnd() * 6.28, new THREE.Color(1.12 + rnd() * 0.1, 1.0, 0.62)) }
-      if (!lite && rnd() < 0.6) for (let i = 0; i < 3; i++) { const p = spot(0.05, 0.04); if (p) add('lavender', id, p.x, p.z, 0.1 + rnd() * 0.03, rnd() * 6.28, tint(1, 0.1)) }
+      if (rnd() < 0.55) { const p = spot(0.2, 0.05); if (p) add('outcrop', id, p.x, p.z, 0.32 + rnd() * 0.14, rnd() * 6.28, tint(1, 0.12), 0.9 + rnd() * 0.5) }
+      for (let c = 0; c < 1 + Math.floor(rnd() * (lite ? 1 : 2.2)); c++) for (const p of cluster(2 + Math.floor(rnd() * 3), 0.15, 0.07)) add('heather', id, p.x, p.z, 0.14 + rnd() * 0.08, rnd() * 6.28, tint(1, 0.16))
+      for (let c = 0; c < (lite ? 1 : 2); c++) for (const p of cluster(3 + Math.floor(rnd() * 2), 0.13, 0.05)) add('tuft', id, p.x, p.z, 0.08 + rnd() * 0.05, rnd() * 6.28, new THREE.Color(1.12 + rnd() * 0.1, 1.0, 0.62))
     } else if (b === 'beach') {
       // Reeds stand along the waterline, on the edges that face the sea.
       for (let e = 0; e < 6; e++) {
@@ -600,6 +659,8 @@ export function buildProps(layout: Layout, quality: WorldQuality): Props {
     rock: () => rockGeometry(1, true),
     stone: () => rockGeometry(2, false),
     lily: lilyGeometry,
+    outcrop: outcropGeometry,
+    heather: heatherGeometry,
     blob: () => new THREE.PlaneGeometry(2, 2).rotateX(-Math.PI / 2),
   }
   const blobTex = blobTexture()

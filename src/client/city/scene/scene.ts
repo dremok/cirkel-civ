@@ -14,7 +14,8 @@ import { createLife, type Life } from './life.ts'
 import { U, cityDepthMaterial, cityMaterial } from './mat.ts'
 import { createPost } from './post.ts'
 import { type View, createRig } from './rig.ts'
-import { BACKDROP, buildBackdrop, buildEnvironment } from './sky.ts'
+import { installGrade } from '../../render/world/grade.ts'
+import { BACKDROP, buildBackdrop, buildEnvironment, buildMotes, buildVignette } from './sky.ts'
 
 export type Quality = 'low' | 'medium' | 'high'
 
@@ -77,7 +78,7 @@ function detectQuality(): Quality {
   return 'high'
 }
 
-const SUN_ELEVATION = THREE.MathUtils.degToRad(29)
+const SUN_ELEVATION = THREE.MathUtils.degToRad(30)
 const SUN_AZIMUTH = THREE.MathUtils.degToRad(205)
 
 export function createCityScene(container: HTMLElement, state: GameState, cityId: number, opts: CitySceneOptions = {}): CityScene {
@@ -91,11 +92,12 @@ export function createCityScene(container: HTMLElement, state: GameState, cityId
   let quality: Quality = opts.quality && opts.quality !== 'auto' ? opts.quality : detectQuality()
   let adaptive = !opts.quality || opts.quality === 'auto'
 
+  installGrade()
   const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance', stencil: false })
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, TIERS[quality].dpr))
   renderer.setSize(Math.max(1, container.clientWidth), Math.max(1, container.clientHeight))
   renderer.outputColorSpace = THREE.SRGBColorSpace
-  renderer.toneMapping = THREE.NeutralToneMapping
+  renderer.toneMapping = THREE.CustomToneMapping
   renderer.shadowMap.enabled = true
   renderer.shadowMap.type = THREE.PCFShadowMap
   // Shadows are refreshed once per frame, not again for every extra pass the AO renders.
@@ -113,7 +115,7 @@ export function createCityScene(container: HTMLElement, state: GameState, cityId
 
   // Light: a warm low sun from the front left, cool sky fill from the environment.
   const sunDir = new THREE.Vector3(Math.cos(SUN_AZIMUTH) * Math.cos(SUN_ELEVATION), Math.sin(SUN_ELEVATION), -Math.sin(SUN_AZIMUTH) * Math.cos(SUN_ELEVATION)).normalize()
-  const sun = new THREE.DirectionalLight(new THREE.Color(NATURE.sun).lerp(new THREE.Color('#FFC98A'), 0.25), 3.3)
+  const sun = new THREE.DirectionalLight(NATURE.sun, 3.35)
   sun.position.copy(sunDir).multiplyScalar(40)
   sun.target.position.set(0, 0, 0)
   sun.castShadow = true
@@ -123,11 +125,15 @@ export function createCityScene(container: HTMLElement, state: GameState, cityId
   fitShadow(sun)
   const envRT = buildEnvironment(renderer, sunDir)
   scene.environment = envRT.texture
-  scene.environmentIntensity = 0.58
+  scene.environmentIntensity = 0.6
   const backdrop = buildBackdrop()
   scene.add(backdrop.mesh)
   const fog = new THREE.Fog(new THREE.Color(BACKDROP.haze), 30, 90)
   scene.fog = fog
+  const vignette = buildVignette()
+  scene.add(vignette.mesh)
+  const motes = buildMotes(140, U.uTime)
+  scene.add(motes.points)
 
   // Static ground.
   const mat = cityMaterial()
@@ -305,11 +311,13 @@ export function createCityScene(container: HTMLElement, state: GameState, cityId
     const t = TIERS[quality]
     if (t.post && !post) post = createPost(renderer, scene, camera, { tiltShift: opts.tiltShift })
     if (!t.post && post) { post.dispose(); post = null }
-    renderer.toneMapping = post ? THREE.NoToneMapping : THREE.NeutralToneMapping
+    renderer.toneMapping = post ? THREE.NoToneMapping : THREE.CustomToneMapping
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, t.dpr))
     renderer.setSize(Math.max(1, container.clientWidth), Math.max(1, container.clientHeight))
     renderer.getDrawingBufferSize(drawSize)
     backdrop.setSize(drawSize.x, drawSize.y)
+    vignette.setSize(drawSize.x, drawSize.y)
+    motes.setSize(drawSize.y)
     post?.setSize(container.clientWidth, container.clientHeight)
     if (sun.shadow.mapSize.x !== t.shadow) {
       sun.shadow.mapSize.set(t.shadow, t.shadow)
@@ -558,6 +566,8 @@ export function createCityScene(container: HTMLElement, state: GameState, cityId
       renderer.setSize(w, h)
       renderer.getDrawingBufferSize(drawSize)
       backdrop.setSize(drawSize.x, drawSize.y)
+      vignette.setSize(drawSize.x, drawSize.y)
+      motes.setSize(drawSize.y)
       post?.setSize(w, h)
       rig.resize()
     },
@@ -590,6 +600,8 @@ export function createCityScene(container: HTMLElement, state: GameState, cityId
       faceGeo.dispose()
       faceMat.dispose()
       backdrop.dispose()
+      vignette.dispose()
+      motes.dispose()
       post?.dispose()
       envRT.dispose()
       sun.shadow.map?.dispose()

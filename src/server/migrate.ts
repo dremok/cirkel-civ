@@ -2,7 +2,7 @@
 // shape (GameState, City, BuildItem, GameEvent, orders, or the record itself) never strands a game
 // in progress. When you change one: bump SCHEMA_VERSION and add the step from the previous version.
 import { BUILDINGS, PLOT_COUNT } from '../engine/city.ts'
-import { newCity } from '../engine/index.ts'
+import { capitalInterior, newCity } from '../engine/index.ts'
 import type { City, CityInterior, GameState } from '../engine/types.ts'
 import type { GameRecord, SeatRecord } from './types.ts'
 import { asBuildItem, FOCI } from './validate.ts'
@@ -31,9 +31,11 @@ const STEPS: Record<number, (rec: Old) => Old> = {
   },
 }
 
-/** The interior a city founded on its tile starts with (newCity's House), unless it already has a valid one. */
+/** The interior a fresh game gives the city (capitals: House and Farm or so; others: newCity's House),
+ * unless it already has a valid one. */
 function cityV2(state: Old, c: Old): City {
-  const interior = validInterior(c?.interior) ?? newCity({ ...state, nextId: 0 } as GameState, c.owner, c.tile, !!c.capital).interior
+  const interior = validInterior(c?.interior) ??
+    (c.capital ? capitalInterior(state.map, c.tile) : newCity({ ...state, nextId: 0 } as GameState, c.owner, c.tile).interior)
   return {
     id: c.id, owner: c.owner, name: c.name, tile: c.tile, pop: c.pop, food: c.food, prod: c.prod, hp: c.hp,
     walls: interior.plots.includes('wall'), build: asBuildItem(c.build) ?? null, capital: !!c.capital, founded: c.founded, interior,

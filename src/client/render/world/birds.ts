@@ -44,7 +44,8 @@ export function buildBirds(layout: Layout, count: number) {
       .replace('#include <common>', '#include <common>\nuniform float uTime;\nattribute float wing;\nattribute float aPhase;')
       .replace('#include <begin_vertex>', `#include <begin_vertex>\n${FLAP}`)
   }
-  const mat = new THREE.MeshStandardMaterial({ color: '#3E4248', roughness: 0.9, side: THREE.DoubleSide })
+  // Pale gulls: they read as gentle flecks of light, never as ink slashes across the board.
+  const mat = new THREE.MeshStandardMaterial({ color: '#F3EEE8', roughness: 0.9, side: THREE.DoubleSide })
   mat.onBeforeCompile = inject
   const depth = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, side: THREE.DoubleSide })
   depth.onBeforeCompile = inject
@@ -71,10 +72,10 @@ export function buildBirds(layout: Layout, count: number) {
       lag: flock ? i * 0.035 : 0,
     })
   }
-  const m = new THREE.Matrix4(), q = new THREE.Quaternion(), p = new THREE.Vector3(), s = new THREE.Vector3(0.32, 0.32, 0.32)
+  const m = new THREE.Matrix4(), q = new THREE.Quaternion(), p = new THREE.Vector3(), s = new THREE.Vector3()
   const e = new THREE.Euler()
 
-  function update(time: number) {
+  function update(time: number, cam: THREE.Vector3) {
     for (let i = 0; i < birds.length; i++) {
       const b = birds[i]
       const a = time * b.speed + b.phase - b.lag * Math.sign(b.speed)
@@ -84,6 +85,8 @@ export function buildBirds(layout: Layout, count: number) {
       const tx = -Math.sin(a) * b.rx * Math.sign(b.speed), tz = Math.cos(a) * b.rz * Math.sign(b.speed)
       e.set(0, Math.atan2(tx, tz), 0.28 * Math.sign(b.speed), 'YXZ')
       q.setFromEuler(e)
+      // Birds passing close to the lens shrink away rather than filling the frame.
+      s.setScalar(0.32 * THREE.MathUtils.smoothstep(p.distanceTo(cam), 6, 11))
       m.compose(p, q, s)
       mesh.setMatrixAt(i, m)
     }

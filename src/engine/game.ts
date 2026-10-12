@@ -1,5 +1,5 @@
 import { CITY_MAX_HP, CITY_NAMES, DEFAULT_MAX_TURNS, UNIT_MAX_HP } from './config.ts'
-import { buildingYield, canPlace, newInterior } from './city.ts'
+import { PLOTS, buildingYield, canPlace, newInterior } from './city.ts'
 import { AXIAL_DIRS, SQRT3, hexCenter, neighbors } from './hex.ts'
 import { generateMap, mirror } from './mapgen.ts'
 import { canStep } from './terrain.ts'
@@ -22,11 +22,12 @@ export function createGame(cfg: GameConfig): GameState {
     winner: null,
   }
   const kinds: UnitType[] = ['spear', 'archer', 'settler']
-  // Two-player maps are point-symmetric: seat 1 gets the mirror image of seat 0's setup.
+  // Two-player maps are point-symmetric: seat 1 gets the mirror image of seat 0's units (capital
+  // interiors are mirror images by construction).
   const mirrored = seats === 2
   map.starts.forEach((start, seat) => {
     const capital = newCity(state, seat, start, true)
-    capital.interior = mirrored && seat === 1 ? rotateInterior(state.cities[0].interior, 3) : capitalInterior(map, start)
+    capital.interior = capitalInterior(map, start)
     state.cities.push(capital)
     const free = neighbors(map, start).filter((nb) => canStep(map, start, nb))
     kinds.forEach((type, i) => {
@@ -53,19 +54,23 @@ export function newCity(state: GameState, owner: PlayerId, tile: TileId, capital
   }
 }
 
-/** The capital: its House plus the best Farm plot (else the best Sawmill, else Harbor plot). */
-function capitalInterior(map: GameMap, tile: TileId): CityInterior {
+/** A capital's starting interior: its House plus a Farm on its best farm plot (else the best
+ * Sawmill plot, else Harbor plot). Equally good plots go to the one facing the middle of the map,
+ * so mirrored capitals get mirrored interiors. */
+export function capitalInterior(map: GameMap, tile: TileId): CityInterior {
   const interior = newInterior()
   interior.plots[1 + towardMiddle(map, tile)] = 'house'
+  const mid = middleVector(map, tile)
   for (const b of ['farm', 'sawmill', 'harbor'] as BuildingType[]) {
     let best = -1
-    let bestV = -1
+    let bestKey: [number, number, number] = [-1, -Infinity, -Infinity]
     for (let p = 7; p < interior.plots.length; p++) {
       if (!canPlace(map, tile, interior, b, p).ok) continue
       const trial = { ...interior, plots: interior.plots.slice() }
       trial.plots[p] = b
       const y = buildingYield(map, tile, trial, p)
-      if (y.food + y.prod > bestV) [best, bestV] = [p, y.food + y.prod]
+      const key: [number, number, number] = [y.food + y.prod, ...facing(mid, PLOTS[p].x, PLOTS[p].z)]
+      if (best < 0 || better(key, bestKey)) [best, bestKey] = [p, key]
     }
     if (best >= 0) {
       interior.plots[best] = b
@@ -73,6 +78,29 @@ function capitalInterior(map: GameMap, tile: TileId): CityInterior {
     }
   }
   return interior
+}
+
+/** Lexicographic comparison with a little slack for floating point. */
+function better(a: number[], b: number[]): boolean {
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] > b[i] + 1e-9) return true
+    if (a[i] < b[i] - 1e-9) return false
+  }
+  return false
+}
+
+/** From `tile` to the middle of the map, in the planar coordinates of hexCenter and PLOTS. */
+function middleVector(map: GameMap, tile: TileId): { x: number; z: number } {
+  const t = map.tiles[tile]
+  const at = hexCenter(t.col, t.row)
+  const mid = hexCenter((map.width - 0.5) / 2, (map.height - 1) / 2)
+  return { x: mid.x - at.x, z: mid.z - at.z }
+}
+
+/** How well a direction faces `mid`: [dot, cross]. A 180° turn of the map negates both vectors and
+ * keeps both numbers, so choices made by them survive the turn. */
+function facing(mid: { x: number; z: number }, dx: number, dz: number): [number, number] {
+  return [mid.x * dx + mid.z * dz, mid.x * dz - mid.z * dx]
 }
 
 /** The interior seen after turning the city by `k` sixth-turns (plot directions shift by k). */
@@ -93,20 +121,12 @@ export function rotatePlot(p: number, k: number): number {
 /** The direction (0..5) from `tile` that points closest to the middle of the map; exact ties go to the
  * counter-clockwise one, so the choice survives a 180° rotation of the map. */
 function towardMiddle(map: GameMap, tile: TileId): number {
-  const t = map.tiles[tile]
-  const at = hexCenter(t.col, t.row)
-  const mid = hexCenter((map.width - 0.5) / 2, (map.height - 1) / 2)
-  const vx = mid.x - at.x
-  const vz = mid.z - at.z
+  const mid = middleVector(map, tile)
   let best = 0
-  let bestDot = -Infinity
-  let bestCross = -Infinity
+  let bestKey: [number, number] = [-Infinity, -Infinity]
   AXIAL_DIRS.forEach(([q, r], d) => {
-    const dx = SQRT3 * (q + r / 2)
-    const dz = 1.5 * r
-    const dot = vx * dx + vz * dz
-    const cross = vx * dz - vz * dx
-    if (dot > bestDot + 1e-9 || (dot >= bestDot - 1e-9 && cross > bestCross)) [best, bestDot, bestCross] = [d, dot, cross]
+    const key = facing(mid, SQRT3 * (q + r / 2), 1.5 * r)
+    if (better(key, bestKey)) [best, bestKey] = [d, key]
   })
   return best
 }

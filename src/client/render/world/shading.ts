@@ -162,29 +162,82 @@ export function patchMaterial<T extends THREE.Material>(material: T, opts: Patch
       fs = fs.replace(
         '#include <color_fragment>',
         /* glsl */ `#include <color_fragment>
+        float tdUp = smoothstep(0.85, 0.98, vUp);
+        float tdFw = length(fwidth(vWorldP.xz));
+        // Detail grows as the camera comes close; the default zoom stays calm.
+        float tdNear = 1.0 - smoothstep(0.005, 0.016, tdFw);
         {
-          // Low-contrast detail on the tops: broad patches that shift hue a little, plus a fine
-          // grain that fades out before it can alias.
-          float up = smoothstep(0.85, 0.98, vUp);
           vec2 p = vWorldP.xz;
-          float fw = length(fwidth(p));
+          float fw = tdFw;
+          float up = tdUp;
+          float kind = floor(vDetail + 0.5);
+          float sand = 1.0 - step(0.5, abs(kind - 1.0));
+          float rock = 1.0 - step(0.5, abs(kind - 2.0));
+          float snow = 1.0 - step(0.5, abs(kind - 3.0));
+          float plains = 1.0 - step(0.5, abs(kind - 4.0));
+          float forest = 1.0 - step(0.5, abs(kind - 5.0));
+          float hills = 1.0 - step(0.5, abs(kind - 6.0));
+          float meadow = 1.0 - step(0.5, kind);
+          float turf = meadow + plains + forest + hills;
+          // Broad hue drift and a fine grain that fades out before it can alias.
           float broad = wNoise(p * 0.9 + 7.0) * 0.6 + wNoise(p * 2.3 + 3.7) * 0.4;
           float mid = wNoise(p * 6.0 + 1.3);
           float fine = wNoise(p * 23.0 + 9.1) * (1.0 - smoothstep(0.012, 0.03, fw));
           vec3 warm = diffuseColor.rgb * vec3(1.06, 1.02, 0.9);
           vec3 cool = diffuseColor.rgb * vec3(0.93, 1.0, 1.03);
           vec3 tinted = mix(cool, warm, smoothstep(0.25, 0.75, broad));
-          float kind = floor(vDetail + 0.5);
-          float sand = 1.0 - step(0.5, abs(kind - 1.0));
-          float rock = 1.0 - step(0.5, abs(kind - 2.0));
-          float snow = 1.0 - step(0.5, abs(kind - 3.0));
           diffuseColor.rgb = mix(diffuseColor.rgb, tinted, up * mix(0.8, 0.35, sand + snow));
+
+          // Painted mottling: soft-edged patches, domain-warped so they look brushed, not noisy.
+          vec2 q = p * 1.7 + vec2(wNoise(p * 0.8 + 3.1), wNoise(p * 0.8 + 9.7)) * 1.6;
+          float pa = wNoise(q);
+          float pb = wNoise(q * 1.9 + 5.3);
+          float pc = wNoise(q * 3.4 + 11.0);
+          float patchA = smoothstep(0.5, 0.64, pa);          // darker, lusher grass / heather
+          float patchB = smoothstep(0.55, 0.68, pb);         // worn earth / bare ground
+          float patchC = smoothstep(0.56, 0.7, pc);          // sunlit, bleached grass
+          float k = up * mix(0.4, 1.0, tdNear);
+          vec3 c = diffuseColor.rgb;
+          vec3 lush = c * vec3(0.78, 0.9, 0.8);
+          vec3 worn = mix(c, vec3(0.42, 0.3, 0.18), 0.45);
+          vec3 bleach = mix(c, c * vec3(1.18, 1.12, 0.86), 1.0);
+          vec3 heather = mix(c, vec3(0.36, 0.2, 0.32), 0.42);
+          vec3 litter = mix(c, vec3(0.33, 0.22, 0.12), 0.35);
+          vec3 stubble = mix(c, c * vec3(1.14, 1.06, 0.84), 1.0);
+          vec3 m = c;
+          m = mix(m, lush, patchA * (meadow * 0.75 + plains * 0.0 + forest * 0.6));
+          m = mix(m, heather, patchA * hills * 0.85);
+          m = mix(m, worn, patchB * (meadow * 0.35 + plains * 0.5 + hills * 0.55) * smoothstep(0.58, 0.72, pb));
+          m = mix(m, litter, patchB * forest * 0.6);
+          m = mix(m, bleach, patchC * (meadow * 0.5 + hills * 0.3));
+          m = mix(m, stubble, patchC * plains * 0.7);
+          // Plains: faint strips of mown and standing grain, only close up.
+          float rows = smoothstep(0.35, 0.65, sin(dot(p, vec2(0.92, 0.38)) * 9.0 + pa * 3.0) * 0.5 + 0.5);
+          m *= 1.0 - plains * tdNear * smoothstep(0.4, 0.6, pb) * rows * 0.06;
+          diffuseColor.rgb = mix(c, m, k * turf);
+
           float grain = (mid - 0.5) * mix(0.09, 0.16, rock) + (fine - 0.5) * mix(0.08, 0.12, rock);
           diffuseColor.rgb *= 1.0 + up * grain * (1.0 - 0.7 * snow);
           // Wind ripples in the sand, fading out before they would alias.
           float rip = sin(dot(p, vec2(0.78, 0.62)) * 27.0 + wNoise(p * 1.4) * 7.0);
           float ripFade = 1.0 - smoothstep(0.01, 0.025, fw);
           diffuseColor.rgb *= 1.0 - up * sand * ripFade * (smoothstep(0.3, 1.0, rip) * 0.045);
+        }`,
+      )
+      // Gentle relief on the tops: soft hummocks catch the low sun up close. Lighting only, so
+      // pieces still stand on the flat top.
+      fs = fs.replace(
+        '#include <normal_fragment_maps>',
+        /* glsl */ `#include <normal_fragment_maps>
+        if (tdUp > 0.0 && tdNear > 0.0) {
+          vec2 p = vWorldP.xz * 2.6;
+          float e = 0.06;
+          float h0 = wNoise(p) + 0.5 * wNoise(p * 2.3 + 4.1);
+          float hx = wNoise(p + vec2(e, 0.0)) + 0.5 * wNoise((p + vec2(e, 0.0)) * 2.3 + 4.1);
+          float hz = wNoise(p + vec2(0.0, e)) + 0.5 * wNoise((p + vec2(0.0, e)) * 2.3 + 4.1);
+          vec2 g = vec2(hx - h0, hz - h0) / e * 0.075 * tdUp * tdNear;
+          vec3 wn = normalize(vec3(-g.x, 1.0, -g.y));
+          normal = normalize(mix(normal, normalize((viewMatrix * vec4(wn, 0.0)).xyz), tdUp));
         }`,
       )
     }

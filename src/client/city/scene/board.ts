@@ -4,9 +4,9 @@
 
 import * as THREE from 'three'
 import { BIOME } from '../../render/palette.ts'
-import { TerrainBuilder, buildColumn } from './column.ts'
+import { TerrainBuilder, buildColumn, groundFlavour } from './column.ts'
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
-import { Kit, type RGB, box, cone, cyl, hash, lin, mix, shade } from './geo.ts'
+import { Kit, type RGB, box, cone, cyl, hash, ico, lin, mix, shade, sphere } from './geo.ts'
 import { BOARD_R, BOTTOM_Y, type CityLayout, LOT_IN, SPOTS, SQRT3, STREET_Y, dirAngle } from './layout.ts'
 
 export const GROUND: Record<string, { base: string; light: string; dark: string }> = {
@@ -56,10 +56,11 @@ const STREET_OUT = SQRT3 / 2 - LOT_IN
 export const STREET_EDGE = offsetPolygon(OUTLINE, STREET_OUT)
 export const KERB_EDGE = offsetPolygon(OUTLINE, STREET_OUT + 0.06)
 
-export function groundColor(biome: string, x: number, z: number, seed: number): RGB {
-  const g = GROUND[biome] ?? BIOME.grass
-  const t = 0.5 + 0.5 * Math.sin(x * 0.7 + seed) * Math.cos(z * 0.6 - seed)
-  return mix(lin(g.base), lin(g.light), 0.25 + 0.35 * t)
+export function groundColor(biome: string, x: number, z: number, _seed: number): RGB {
+  const b = biome === 'forest' || biome === 'snow' || biome === 'deep' || biome === 'shallow' ? 'grass' : biome === 'mountain' ? 'hills' : biome
+  // the town's own land is a little greener than the wild tile around it
+  const own = groundFlavour(b, x * 1.6, z * 1.6, 0.5)
+  return b === 'grass' || b === 'beach' ? own : mix(own, groundFlavour('grass', x * 1.6, z * 1.6, 0.6), 0.35)
 }
 
 export function buildBoard(layout: CityLayout) {
@@ -153,6 +154,39 @@ export function buildStreets(layout: CityLayout, built: (plot: number) => boolea
       k.add(cyl(0.014, 0.016, 0.012, 6), '#4A4B50', { p: [x, STREET_Y + 0.006, z] })
       k.add(box(0.028, 0.036, 0.028), '#FFD08A', { p: [x, STREET_Y + 0.29, z] }, { glow: 1.3 })
       k.add(cone(0.025, 0.022, 4), '#4A4B50', { p: [x, STREET_Y + 0.318, z], r: [0, Math.PI / 4, 0] })
+    }
+  }
+  // Benches, flower tubs and the odd cart along the paved edges of built lots.
+  const blooms = ['#D9473A', '#A58BD0', '#F2CC4A', '#F6F1E6', '#E86A8A']
+  for (const sp of SPOTS) {
+    if (sp.index === 0 || !built(sp.index)) continue
+    for (let d = 0; d < 6; d++) {
+      const roll = hash(sp.index * 6 + d, 91)
+      if (roll > 0.26) continue
+      const a = dirAngle(d)
+      const rr = LOT_IN + 0.045
+      const x = sp.x + Math.cos(a) * rr, z = sp.z + Math.sin(a) * rr
+      if (Math.hypot(x, z) < 1.3) continue
+      const along = -a + Math.PI / 2
+      k.group({ p: [x, STREET_Y, z], r: [0, along, 0] }, () => {
+        if (roll < 0.1) {
+          // a bench with its back to the lot
+          k.add(box(0.13, 0.01, 0.035), '#A27850', { p: [0, 0.042, 0] }, { pattern: 'boards' })
+          k.add(box(0.13, 0.03, 0.007), '#A27850', { p: [0, 0.065, -0.018] })
+          for (const sx of [-1, 1]) k.add(box(0.008, 0.04, 0.03), '#4A4B50', { p: [sx * 0.055, 0.02, 0] })
+        } else if (roll < 0.2) {
+          // a wooden tub of flowers
+          const c = blooms[Math.floor(hash(sp.index, d) * blooms.length)]
+          k.add(cyl(0.032, 0.026, 0.04, 8), '#8E5E3B', { p: [0, 0.02, 0] }, { pattern: 'boards' })
+          for (let i = 0; i < 5; i++) k.add(ico(0.013, 0), i % 2 ? c : '#6E9A4F', { p: [Math.cos(i * 1.3) * 0.016, 0.05 + (i % 2) * 0.008, Math.sin(i * 1.3) * 0.016] }, { flutter: 0.002 })
+        } else {
+          // a little hand cart left by the wall
+          k.add(box(0.09, 0.02, 0.06), '#9A6B45', { p: [0, 0.04, 0] }, { pattern: 'boards' })
+          for (const sz of [-1, 1]) k.add(cyl(0.024, 0.024, 0.008, 10), '#5E3D29', { p: [0, 0.024, sz * 0.034], r: [Math.PI / 2, 0, 0] })
+          k.add(box(0.08, 0.005, 0.005), '#5E3D29', { p: [0.08, 0.05, 0], r: [0, 0, 0.25] })
+          k.add(sphere(0.02, 6, 4), hash(sp.index, d + 1) < 0.5 ? '#E8902E' : '#7FA850', { p: [-0.01, 0.06, 0] })
+        }
+      })
     }
   }
   const geo = b.build()

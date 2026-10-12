@@ -35,8 +35,8 @@ There is no randomness anywhere in the rules. The same state and orders always g
 
 - At the start of every tick each unit gains **speed** points (Spearman, Archer, Settler 2; Rider 3).
   Units on Hold, and units that have stopped for the turn, gain nothing. Points reset every turn.
-- **Step cost** into a neighbour: `6 x terrain + 3 x levels climbed`, terrain 1 for grass, plains and
-  beach, 2 for forest and hills. Going down is free. The cost is capped at `6 x speed`, so any
+- **Step cost** into a neighbour: `6 x terrain + 3 x levels climbed`, terrain 1 for grass, plains,
+  beach and forest, 2 for hills. Going down is free. The cost is capped at `6 x speed`, so any
   passable neighbour can be entered within one turn.
 - Water, mountains and snow are impassable, and so is a height difference of more than 2 (a cliff).
 - A unit steps when its points reach the cost of its next step, at most one step per tick, and pays
@@ -57,7 +57,8 @@ Every unit that is ready picks its step for this tick. **Ready** means its point
   enemy unit is next to it, it lunges at the **weakest** one (fewest hp, then the one it would hurt
   most, then lowest id) and does not walk on. A lunge only hits an enemy that stays put: if the enemy
   steps away this tick, the Aggressive unit stays where it is.
-- **Hold:** never moves. +50 % defence. Archers on Hold keep **overwatch** (4.5).
+- **Hold:** never moves. +50 % defence outside cities (inside its own city the city's bonus applies
+  instead). Archers on Hold keep **overwatch** (4.5).
 - **Settlers** never attack; an Aggressive Settler behaves as a Cautious one.
 
 ### 4.2 Meetings
@@ -90,8 +91,8 @@ Every unit that is ready picks its step for this tick. **Ready** means its point
 - If the defender dies and the surviving attackers all belong to one player, the one that dealt the
   most damage **advances** into the tile (it consumes that step of its path, or drops its path if it
   was a lunge). Nobody advances into a city that still has hp.
-- **Cities.** A unit inside its own city defends with +50 %, and +50 % more when the attacker comes
-  from a side covered by a wall (section 7). An empty enemy city with hp defends itself (strength 4,
+- **Cities.** A unit inside its own city defends with +50 % (Hold adds nothing there), and +50 % more
+  when the attacker comes from a side covered by a wall (section 7). An empty enemy city with hp defends itself (strength 4,
   +50 % from a walled side); bring it to 0 hp in melee and the attacker advances and **captures** it.
   An empty city that already has 0 hp is captured by the first unit that walks in, without a fight.
 - **Capture:** the city changes owner, keeps its buildings, drops to 5 hp and loses one citizen
@@ -135,9 +136,9 @@ sides take damage; shots only hurt the target. Units have 10 hp, cities 20.
 - **type bonus:** Spearmen fight Riders at x2, attacking or defending.
 - **health:** `0.5 + 0.5 x hp / max hp`, so a dying unit fights at about half strength.
 - **bonuses** (added up): higher ground +15 % per level above the opponent, at most +45 % (attacker or
-  defender, and for shots); for the defender only: forest +25 %, Hold +50 %, inside its own city +50 %,
-  walls +50 %.
-- **Cities:** defence 4, shooting 3, both scaled by the city's health and height. A wall facing the
+  defender, and for shots); for the defender only: forest +25 %, Hold +50 % (not inside a city),
+  inside its own city +50 %, a wall facing the attacker +50 %.
+- **Cities:** defence 4, shooting 2, both scaled by the city's health and height. A wall facing the
   attacker adds +50 % to defence; each Tower facing the target adds +1 to shooting (at most +2).
 - **Sides.** The side of a city something is on is the nearest of the six directions by angle. A tile
   exactly between two sides is on both, so a wall or tower on either counts.
@@ -200,7 +201,8 @@ neighbour tiles in those directions.
      `8 + 4 x pop` food (12, 16, 20, 24, ...; 25 % less with a staffed Temple) and has room; the rest
      carries over. A city at its housing keeps at most that much food.
 3. **Healing.** Units that took no damage this turn heal 1 hp, or 3 hp inside their own city.
-4. **City repair.** A city heals 3 hp, unless it or its garrison took damage this turn (a siege).
+4. **City repair.** A city heals 3 hp (`cityRepair`), unless it or its garrison took damage this turn
+   (a siege).
 5. **Elimination.** A player with no cities is out; their remaining units are removed (`death`).
 6. **Victory.** The last player with cities wins. After the last turn (60 by default) the best
    score wins: 10 per city + 3 per citizen + 1 per building (+3 more per Temple) + 1 per unit. A tie
@@ -239,8 +241,8 @@ buildings and city focus are visible.
 | `buildFailed` | 8 | a building no longer fits its plot (`item`, `reason`); the production stays |
 | `spawn`, `grow` | 8 | a new unit (after its `built`) and population; `grow` also reports shrinking (Settler built, or a capture at ticks 1-6) |
 | `heal` | 8 | a unit healed (new hp) |
+| `cityRepair` | 8 | a city repaired itself (new hp) |
 | `eliminated`, `victory` | 8 | end of a player, end of the game |
 
 Within a tick, events are in the order things happen: clashes, moves, melee, engaged halts, deaths,
-advances and captures, overwatch shots and their deaths, contact halts. City repair at tick 8 has no
-event; read it from the new state.
+advances and captures, overwatch shots and their deaths, contact halts.

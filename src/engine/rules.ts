@@ -728,7 +728,9 @@ class Resolver {
       if (L.damaged && ci >= 0 && s.cities[ci].owner === L.u.owner) this.cityDamaged.add(ci)
     }
     s.cities.forEach((c, ci) => {
-      if (!this.cityDamaged.has(ci)) c.hp = Math.min(CITY_MAX_HP, c.hp + CITY_REGEN)
+      if (this.cityDamaged.has(ci) || c.hp >= CITY_MAX_HP) return
+      c.hp = Math.min(CITY_MAX_HP, c.hp + CITY_REGEN)
+      this.events.push({ t, kind: 'cityRepair', city: c.id, hp: c.hp })
     })
 
     s.units = [...this.lives.filter((L) => !L.dead).map((L) => L.u), ...spawned]

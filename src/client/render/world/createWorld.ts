@@ -3,7 +3,7 @@
 // See ART.md for the look and api.ts for the contract.
 
 import * as THREE from 'three'
-import type { GameMap } from '../../../engine/types.ts'
+import type { GameMap, TileId } from '../../../engine/types.ts'
 import type { World, WorldQuality } from '../api.ts'
 import { NATURE } from '../palette.ts'
 import { buildMotes, buildPuffs, buildVignette } from './atmosphere.ts'
@@ -121,7 +121,11 @@ export function createWorld(container: HTMLElement, map: GameMap, opts: WorldOpt
   scene.add(terrain.mesh)
   const water = buildWater(layout)
   scene.add(water.surface, water.rim)
-  const props = buildProps(layout, quality)
+  // Props are rebuilt when the tier changes how dense they are (lite on low, extra flowers on high).
+  const density = (q: WorldQuality) => (q === 'low' ? 0 : q === 'medium' ? 1 : 2)
+  let props = buildProps(layout, quality)
+  let propsDensity = density(quality)
+  let cleared: TileId[] = []
   scene.add(props.group)
   const birds = buildBirds(layout, 6)
   scene.add(birds.mesh)
@@ -137,6 +141,14 @@ export function createWorld(container: HTMLElement, map: GameMap, opts: WorldOpt
   let postKind: 'full' | 'glow' | null = null
   function applyQuality() {
     const t = TIERS[quality]
+    if (density(quality) !== propsDensity) {
+      scene.remove(props.group)
+      props.dispose()
+      props = buildProps(layout, quality)
+      props.setCleared(cleared)
+      propsDensity = density(quality)
+      scene.add(props.group)
+    }
     const want = opts.post === undefined ? t.post : opts.post || null
     if (want !== postKind) {
       post?.dispose()
@@ -193,7 +205,7 @@ export function createWorld(container: HTMLElement, map: GameMap, opts: WorldOpt
     const d = camera.position.distanceTo(center)
     fog.near = d + boardR * 0.3
     fog.far = d + boardR * 6
-    if (birds.mesh.visible) birds.update(time)
+    if (birds.mesh.visible) birds.update(time, camera.position)
     for (const cb of frameCbs) cb(dt, time)
     draw(dt)
   }
@@ -260,7 +272,8 @@ export function createWorld(container: HTMLElement, map: GameMap, opts: WorldOpt
       return () => { frameCbs.delete(cb) }
     },
     setCleared(tiles) {
-      props.setCleared(tiles)
+      cleared = [...tiles]
+      props.setCleared(cleared)
     },
     focus(tile, animate, focusOpts) {
       rig.focus(layout.cx[tile], layout.stand[tile], layout.cz[tile], animate, focusOpts?.zoom)

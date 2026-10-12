@@ -55,7 +55,7 @@ export const TERRAIN_COST: Record<Biome, number> = {
   beach: 1,
   grass: 1,
   plains: 1,
-  forest: 2,
+  forest: 1,
   hills: 2,
   mountain: Infinity,
   snow: Infinity,

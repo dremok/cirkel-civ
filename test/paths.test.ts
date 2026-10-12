@@ -45,10 +45,10 @@ describe('pathTiming', () => {
   })
 
   it('minimises arrival time, not total cost (points reset each turn)', () => {
-    // Spear (6 points per 3 ticks): flat then forest wastes the end of turn 1; forest first does not.
+    // Spear (6 points per 3 ticks): flat then hills wastes the end of turn 1; hills first does not.
     const map = makeMap(6, 3, (t) => {
-      if (t.row === 0 && t.col === 2) t.biome = 'forest'
-      if (t.row === 2 && t.col === 1) t.biome = 'forest'
+      if (t.row === 0 && t.col === 2) t.biome = 'hills'
+      if (t.row === 2 && t.col === 1) t.biome = 'hills'
     })
     const s = unit(0, 'spear', at(map, 1, 1))
     const st = makeState(map, [s])

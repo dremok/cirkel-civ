@@ -215,6 +215,7 @@ ev.push({ t: 8, kind: 'spawn', unit: { ...newUnit(state, 1, 'rider', spawnTile) 
 }
 ev.push({ t: 8, kind: 'grow', city: capA.id, pop: capA.pop + 1 })
 ev.push({ t: 8, kind: 'heal', unit: a2.id, hp: 10 })
+ev.push({ t: 8, kind: 'cityRepair', city: town.id, hp: 8 })
 
 function applyScript(s0: GameState, events: GameEvent[]): GameState {
   const s = structuredClone(s0)
@@ -241,6 +242,7 @@ function applyScript(s0: GameState, events: GameEvent[]): GameState {
       }
       case 'grow': { const c = city(e.city); if (c) c.pop = e.pop; break }
       case 'heal': { const u = unit(e.unit); if (u) u.hp = e.hp; break }
+      case 'cityRepair': { const c = city(e.city); if (c) c.hp = e.hp; break }
     }
   }
   s.turn++

@@ -11,6 +11,7 @@ import { birch, broadleaf, bush, fruitTree, tuft } from './flora.ts'
 import {
   Kit, type Place, type RGB, box, cone, cyl, flat, gableEnds, gableRoof, hash, hexPts, ico, lathe, lin, mix, prism, rbox, rng, shade, sphere, spire, torus,
 } from './geo.ts'
+import { MEADOWS, flavour } from './column.ts'
 import { LOT_R as LOT_R_WORLD, LOT_Y, type PlotSpot, dirAngle } from './layout.ts'
 
 /** Buildings are authored a little small and scaled up onto their lots by this much. */
@@ -81,25 +82,58 @@ export const P = {
   skin: '#EBB896',
 }
 
-/** Wall colours that do not fight the player colour. */
-function wallColour(team: Team, r: () => number): string {
-  const t = new THREE.Color(team.base)
-  const hsl = { h: 0, s: 0, l: 0 }
-  t.getHSL(hsl)
-  const ok = P.plaster.filter((c) => {
-    const x = new THREE.Color(c)
-    const h2 = { h: 0, s: 0, l: 0 }
-    x.getHSL(h2)
-    const dh = Math.min(Math.abs(h2.h - hsl.h), 1 - Math.abs(h2.h - hsl.h))
-    return dh > 0.06 || h2.s < 0.18
-  })
-  return ok[Math.floor(r() * ok.length)] ?? P.plaster[0]
+/** Is a colour close in hue to the player's (so it would fight the accent)? */
+function nearTeam(team: Team, c: string): boolean {
+  const a = { h: 0, s: 0, l: 0 }, b = { h: 0, s: 0, l: 0 }
+  new THREE.Color(team.base).getHSL(a)
+  new THREE.Color(c).getHSL(b)
+  const dh = Math.min(Math.abs(a.h - b.h), 1 - Math.abs(a.h - b.h))
+  return dh < 0.06 && b.s > 0.18
 }
 
-/** Some houses keep older roofs of slate or tarred shingle, so the town colour stays an accent. */
-const NEUTRAL_ROOFS = ['#6F7A86', '#665247', '#7E766C']
+const pickFrom = <T,>(list: T[], r: () => number): T => list[Math.floor(r() * list.length)]
+
+/** Wall finishes around town: lime plaster in many tints, painted boards, a few of stone. */
+const PAINTED = ['#9E3C2C', '#D1A657', '#93A8B6', '#A3B48E', '#EAD9B8', '#C9B5D0']
+function wallFor(team: Team, r: () => number): { c: string; pattern: 'plaster' | 'boards' | 'stone' } {
+  const k = r()
+  if (k < 0.62) {
+    const ok = P.plaster.filter((c) => !nearTeam(team, c))
+    return { c: pickFrom(ok.length ? ok : P.plaster, r), pattern: 'plaster' }
+  }
+  if (k < 0.9) {
+    const ok = PAINTED.filter((c) => !nearTeam(team, c))
+    return { c: pickFrom(ok, r), pattern: 'boards' }
+  }
+  return { c: r() < 0.5 ? P.stone : P.granite, pattern: 'stone' }
+}
+
+/** Roof materials. The player's colour is the accent; the older roofs keep their own. */
+const ROOFS = {
+  terracotta: ['#C8704C', '#B9623F', '#D08159'],
+  slate: ['#7A818E', '#868C98', '#6D7481'],
+  thatch: ['#CDA85C', '#C29A4F'],
+  shingle: ['#8A6E5A', '#7C6A55', '#7F8562'],
+  tar: ['#5A4A45', '#4E4642'],
+}
+type RoofKind = keyof typeof ROOFS | 'team'
+
+function roofOf(team: Team, r: () => number, weights: Partial<Record<RoofKind, number>>): RGB {
+  const entries = Object.entries(weights) as [RoofKind, number][]
+  const total = entries.reduce((a, [, w]) => a + w, 0)
+  let x = r() * total
+  let kind: RoofKind = entries[0][0]
+  for (const [k, w] of entries) { if ((x -= w) <= 0) { kind = k; break } }
+  if (kind === 'team') return roofColour(team, r)
+  // a terracotta town for a red player would drown the accent: use old, muted brown tiles instead
+  const list = ROOFS[kind].filter((c) => !nearTeam(team, c))
+  return mix(lin(pickFrom(list.length ? list : ['#A07056', '#946B53', '#8F7562'], r)), lin('#8A8178'), r() * 0.12)
+}
+
+const HOUSE_ROOFS: Partial<Record<RoofKind, number>> = { team: 0.34, terracotta: 0.24, slate: 0.14, thatch: 0.12, shingle: 0.1, tar: 0.06 }
+
 function houseRoof(team: Team, r: () => number): RGB {
-  return r() < 0.3 ? mix(lin(NEUTRAL_ROOFS[Math.floor(r() * NEUTRAL_ROOFS.length)]), lin('#8A8178'), r() * 0.2) : roofColour(team, r)
+  return roofOf(team, r, HOUSE_ROOFS)
 }
 
 function roofColour(team: Team, r: () => number): RGB {
@@ -109,17 +143,22 @@ function roofColour(team: Team, r: () => number): RGB {
 
 /** Barns and boathouses are falu red, unless the player is red; then tarred timber. */
 function barnColour(team: Team): string {
-  const c = new THREE.Color(team.base)
-  const hsl = { h: 0, s: 0, l: 0 }
-  c.getHSL(hsl)
-  const red = hsl.h < 0.06 || hsl.h > 0.95
-  return red ? '#6E5039' : P.falu
+  return nearTeam(team, P.falu) ? '#6E5039' : P.falu
 }
+
+const DOORS = ['#6A4329', '#3F7F7A', '#8C5A3A', '#5E6E85', '#4F6B4A']
+const STALL_STRIPES = ['#E2B547', '#4F9C95', '#D98C8C', '#8FAE7A', '#7D8FC0']
 
 // ---------------------------------------------------------------------------------------------
 // Pieces
 
 /** The lot: a low hex slab with kerb sides. */
+/** A lawn in one of the meadow flavours (sage, spring green, chartreuse), per lot. */
+function lawn(ctx: BuildCtx, lift = 0): RGB {
+  const c = flavour(MEADOWS, hash(ctx.seed, 77))
+  return mix(c, lin(BIOME.grass.light), 0.15 + lift)
+}
+
 function lot(k: Kit, ctx: BuildCtx, top: string | RGB, pattern: 'grass' | 'cobble' | 'sand' | 'pavers' | 'none' = 'grass', turf = false) {
   const rot = lotRot(ctx.spot)
   k.group({ s: 1 / S }, () => {
@@ -156,7 +195,8 @@ function doorAt(k: Kit, x: number, z: number, rotY: number, w = 0.075, h = 0.13,
 
 interface HouseOpts {
   w: number; d: number; h: number; roofH: number
-  wall: string; roof: RGB; seed: number; glow: number
+  wall: string | { c: string; pattern: 'plaster' | 'boards' | 'stone' }; roof: RGB; seed: number; glow: number
+  team?: Team
   door?: 'front' | 'side' | 'none'
   chimney?: number | null
   storeys?: 1 | 2
@@ -168,9 +208,13 @@ interface HouseOpts {
 function house(k: Kit, o: HouseOpts) {
   const { w, d, h, roofH } = o
   const r = rng(o.seed)
+  const wall = typeof o.wall === 'string' ? o.wall : o.wall.c
+  const wallPat = typeof o.wall === 'string' ? 'plaster' : o.wall.pattern
+  const door = o.team && r() < 0.35 ? o.team.dark : pickFrom(DOORS, r)
+  const shutters = r() < 0.4 ? (o.team && r() < 0.5 ? o.team.base : pickFrom(['#3F7F7A', '#5E8A5A', '#6F88A6', '#F4EFE6'], r)) : null
   k.add(box(w + 0.02, 0.035, d + 0.02), P.stoneDark, { p: [0, 0.0175, 0] }, { pattern: 'stone' })
-  k.add(rbox(w, h, d, 0.008), o.wall, { p: [0, h / 2 + 0.02, 0] }, { pattern: 'plaster', jit: 0.02 })
-  gableEnds(k, w, d, roofH, o.wall, { p: [0, h + 0.02, 0] })
+  k.add(rbox(w, h, d, 0.008), wall, { p: [0, h / 2 + 0.02, 0] }, { pattern: wallPat, jit: 0.02 })
+  gableEnds(k, w, d, roofH, wall, { p: [0, h + 0.02, 0] }, wallPat)
   gableRoof(k, w, d, roofH, o.roof, { p: [0, h + 0.02, 0] }, { ridge: shade(o.roof, 0.72), over: 0.035, t: 0.024 })
   if (o.corners !== false) for (const sx of [-1, 1]) for (const sz of [-1, 1]) k.add(box(0.016, h, 0.016), P.trim, { p: [sx * (w / 2 - 0.004), h / 2 + 0.02, sz * (d / 2 - 0.004)] })
   // eaves boards
@@ -185,6 +229,7 @@ function house(k: Kit, o: HouseOpts) {
     const front = o.door === 'front' && s === 0 && i === Math.floor(n / 2)
     if (!front) {
       windowAt(k, x, wy(s), d / 2, 0, winW, winH, o.glow * (r() < 0.75 ? 1 : 0.25))
+      if (shutters) for (const sx of [-1, 1]) k.add(box(0.022, winH + 0.012, 0.008), shutters, { p: [x + sx * (winW / 2 + 0.022), wy(s), d / 2 + 0.006] }, { pattern: 'boards' })
       if (s === 0 && r() < 0.55) flowerBox(k, x, wy(s) - winH / 2 - 0.016, d / 2 + 0.014, r)
     }
     windowAt(k, x, wy(s), -d / 2, Math.PI, winW, winH, o.glow * (r() < 0.6 ? 1 : 0.2))
@@ -192,8 +237,8 @@ function house(k: Kit, o: HouseOpts) {
   // a window in each gable
   for (const sx of [-1, 1]) windowAt(k, sx * w / 2, h + 0.02 + roofH * 0.32, 0, sx * Math.PI / 2, 0.04, 0.045, o.glow * 0.8)
   if (storeys === 2) for (const sx of [-1, 1]) windowAt(k, sx * w / 2, wy(0), 0, sx * Math.PI / 2, winW, winH, o.glow)
-  if (o.door === 'front') doorAt(k, -w / 2 + (w / n) * (Math.floor(n / 2) + 0.5), d / 2, 0)
-  else if (o.door === 'side') doorAt(k, w / 2, 0, Math.PI / 2)
+  if (o.door === 'front') doorAt(k, -w / 2 + (w / n) * (Math.floor(n / 2) + 0.5), d / 2, 0, 0.075, 0.13, door)
+  else if (o.door === 'side') doorAt(k, w / 2, 0, Math.PI / 2, 0.075, 0.13, door)
   // a little porch roof over the front door
   if (o.door === 'front' && storeys === 2) {
     const dx = -w / 2 + (w / n) * (Math.floor(n / 2) + 0.5)
@@ -202,7 +247,7 @@ function house(k: Kit, o: HouseOpts) {
   if (o.dormer) {
     const dz = d / 4 + 0.01
     k.group({ p: [w * 0.15, h + 0.02 + roofH * 0.3, dz] }, () => {
-      k.add(box(0.1, 0.09, 0.09), o.wall, { p: [0, 0.03, 0] }, { pattern: 'plaster' })
+      k.add(box(0.1, 0.09, 0.09), wall, { p: [0, 0.03, 0] }, { pattern: wallPat })
       gableRoof(k, 0.1, 0.11, 0.05, o.roof, { p: [0, 0.075, 0], r: [0, Math.PI / 2, 0] }, { over: 0.012, t: 0.014 })
       windowAt(k, 0, 0.03, 0.046, 0, 0.04, 0.045, o.glow)
     })
@@ -211,8 +256,10 @@ function house(k: Kit, o: HouseOpts) {
     const cx = o.chimney * w / 2
     const cz = -d * 0.18
     const top = h + 0.02 + roofH * (1 - Math.abs(cz) / (d / 2)) + 0.07
-    k.add(rbox(0.055, top - h, 0.055, 0.006), P.chimney, { p: [cx, h + (top - h) / 2, cz] }, { pattern: 'stone' })
-    k.add(box(0.07, 0.016, 0.07), shade(lin(P.chimney), 0.85), { p: [cx, top, cz] })
+    const cc = r() < 0.55 ? P.brick : '#9C948A'
+    k.add(rbox(0.055, top - h, 0.055, 0.006), cc, { p: [cx, h + (top - h) / 2, cz] }, { pattern: 'stone' })
+    k.add(box(0.068, 0.014, 0.068), shade(lin(cc), 0.8), { p: [cx, top, cz] })
+    k.add(box(0.034, 0.004, 0.034), '#2E2826', { p: [cx, top + 0.006, cz] })
     k.anchor('chimney', [cx, top + 0.01, cz])
   }
 }
@@ -291,11 +338,11 @@ function houses(k: Kit, ctx: BuildCtx) {
   const r = rng(ctx.seed * 31 + 7)
   const glow = 1
   const v = ctx.seed % 4
-  lot(k, ctx, mix(lin(P.lawn), lin(P.lawnLight), 0.35))
+  lot(k, ctx, lawn(ctx))
   if (v === 0) {
     // Two cottages and a garden with an apple tree.
-    k.group({ p: [-0.12, 0, -0.2], r: [0, 0.08, 0] }, () => house(k, { w: 0.5, d: 0.3, h: 0.24, roofH: 0.2, wall: wallColour(ctx.team, r), roof: houseRoof(ctx.team, r), seed: ctx.seed, glow, door: 'front', chimney: 0.45, dormer: true }))
-    k.group({ p: [0.24, 0, 0.2], r: [0, Math.PI / 2 + 0.1, 0] }, () => house(k, { w: 0.34, d: 0.26, h: 0.2, roofH: 0.17, wall: wallColour(ctx.team, r), roof: houseRoof(ctx.team, r), seed: ctx.seed + 1, glow, door: 'front', chimney: -0.5 }))
+    k.group({ p: [-0.12, 0, -0.2], r: [0, 0.08, 0] }, () => house(k, { w: 0.5, d: 0.3, h: 0.24, roofH: 0.2, wall: wallFor(ctx.team, r), roof: houseRoof(ctx.team, r), seed: ctx.seed, glow, team: ctx.team, door: 'front', chimney: 0.45, dormer: true }))
+    k.group({ p: [0.24, 0, 0.2], r: [0, Math.PI / 2 + 0.1, 0] }, () => house(k, { w: 0.34, d: 0.26, h: 0.2, roofH: 0.17, wall: wallFor(ctx.team, r), roof: houseRoof(ctx.team, r), seed: ctx.seed + 1, glow, team: ctx.team, door: 'front', chimney: -0.5 }))
     if (ctx.bare) return
     k.group({ p: [-0.24, 0, 0.3], s: 0.9 }, () => fruitTree(k, ctx.seed))
     fence(k, [[-0.48, 0.12], [-0.05, 0.12], [-0.05, 0.5]])
@@ -303,7 +350,7 @@ function houses(k: Kit, ctx: BuildCtx) {
     for (let i = 0; i < 3; i++) k.group({ p: [-0.42 + i * 0.12, 0, 0.18 + hash(ctx.seed, i) * 0.04] }, () => bush(k, BIOME.forest.base, ctx.seed + i, ['#E86A8A', '#F2CF5B', '#F4EFE2'][i]))
   } else if (v === 1) {
     // A tall townhouse with its gable to the street, and a lean-to shed.
-    k.group({ p: [-0.08, 0, 0], r: [0, Math.PI / 2, 0] }, () => house(k, { w: 0.5, d: 0.34, h: 0.42, roofH: 0.26, wall: wallColour(ctx.team, r), roof: houseRoof(ctx.team, r), seed: ctx.seed, glow, door: 'front', chimney: -0.5, storeys: 2 }))
+    k.group({ p: [-0.08, 0, 0], r: [0, Math.PI / 2, 0] }, () => house(k, { w: 0.5, d: 0.34, h: 0.42, roofH: 0.26, wall: wallFor(ctx.team, r), roof: houseRoof(ctx.team, r), seed: ctx.seed, glow, team: ctx.team, door: 'front', chimney: -0.5, storeys: 2 }))
     k.group({ p: [0.28, 0, -0.18] }, () => {
       k.add(box(0.2, 0.15, 0.18), P.boards, { p: [0, 0.075, 0] }, { pattern: 'boards' })
       k.add(box(0.24, 0.016, 0.22), houseRoof(ctx.team, r), { p: [0, 0.165, 0], r: [0, 0, -0.3] }, { pattern: 'roof' })
@@ -314,9 +361,9 @@ function houses(k: Kit, ctx: BuildCtx) {
     k.group({ p: [0.18, 0, 0.26] }, () => bush(k, BIOME.forest.base, ctx.seed + 3, '#F4EFE2'))
   } else if (v === 2) {
     // An L-shaped house with a kitchen garden.
-    const wall = wallColour(ctx.team, r), roof = houseRoof(ctx.team, r)
-    k.group({ p: [-0.1, 0, -0.18] }, () => house(k, { w: 0.56, d: 0.28, h: 0.26, roofH: 0.2, wall, roof, seed: ctx.seed, glow, door: 'front', chimney: -0.4 }))
-    k.group({ p: [0.24, 0, 0.08], r: [0, Math.PI / 2, 0] }, () => house(k, { w: 0.34, d: 0.26, h: 0.24, roofH: 0.18, wall, roof, seed: ctx.seed + 2, glow, door: 'none', chimney: null, corners: false }))
+    const wall = wallFor(ctx.team, r), roof = houseRoof(ctx.team, r)
+    k.group({ p: [-0.1, 0, -0.18] }, () => house(k, { w: 0.56, d: 0.28, h: 0.26, roofH: 0.2, wall, roof, seed: ctx.seed, glow, team: ctx.team, door: 'front', chimney: -0.4 }))
+    k.group({ p: [0.24, 0, 0.08], r: [0, Math.PI / 2, 0] }, () => house(k, { w: 0.34, d: 0.26, h: 0.24, roofH: 0.18, wall, roof, seed: ctx.seed + 2, glow, team: ctx.team, door: 'none', chimney: null, corners: false }))
     for (let i = 0; i < 4; i++) {
       k.add(box(0.28, 0.02, 0.035), P.soil, { p: [-0.18, 0.01, 0.12 + i * 0.07] })
       for (let j = 0; j < 5; j++) k.add(ico(0.02, 0), i % 2 ? '#6E9A4F' : '#8DBA5A', { p: [-0.3 + j * 0.06, 0.03, 0.12 + i * 0.07] }, { jit: 0.2 })
@@ -330,7 +377,7 @@ function houses(k: Kit, ctx: BuildCtx) {
     for (let i = 0; i < 3; i++) {
       const tall = i === 1
       k.group({ p: [-0.05, 0, -0.33 + i * 0.235], r: [0, Math.PI / 2, 0] }, () => house(k, {
-        w: 0.42, d: 0.22, h: tall ? 0.44 : 0.34, roofH: 0.2, wall: wallColour(ctx.team, r), roof: houseRoof(ctx.team, r), seed: ctx.seed + i, glow,
+        w: 0.42, d: 0.22, h: tall ? 0.44 : 0.34, roofH: 0.2, wall: wallFor(ctx.team, r), roof: houseRoof(ctx.team, r), seed: ctx.seed + i, glow, team: ctx.team,
         door: 'front', chimney: i === 1 ? 0.5 : -0.5, storeys: 2, corners: false,
       }))
     }
@@ -382,7 +429,7 @@ function farm(k: Kit, ctx: BuildCtx) {
     k.add(box(w + 0.02, 0.03, d + 0.02), P.stoneDark, { p: [0, 0.015, 0] }, { pattern: 'stone' })
     k.add(rbox(w, h, d, 0.006), wall, { p: [0, h / 2 + 0.02, 0] }, { pattern: 'boards' })
     gableEnds(k, w, d, rh, wall, { p: [0, h + 0.02, 0] }, 'boards')
-    gableRoof(k, w, d, rh, roofColour(ctx.team, r), { p: [0, h + 0.02, 0] }, { ridge: lin(ctx.team.dark), over: 0.04 })
+    gableRoof(k, w, d, rh, roofOf(ctx.team, r, { team: 0.45, terracotta: 0.25, thatch: 0.3 }), { p: [0, h + 0.02, 0] }, { ridge: lin(ctx.team.dark), over: 0.04 })
     for (const sx of [-1, 1]) for (const sz of [-1, 1]) k.add(box(0.018, h, 0.018), P.trim, { p: [sx * (w / 2 - 0.004), h / 2 + 0.02, sz * (d / 2 - 0.004)] })
     // barn doors with white cross bracing, facing +z (out to the fields)
     k.group({ p: [0, 0, d / 2] }, () => {
@@ -418,7 +465,7 @@ function sawmill(k: Kit, ctx: BuildCtx, spinners: Spinner[]) {
   // sawdust scattered on the yard
   k.add(cone(0.09, 0.05, 9), '#E6D2A2', { p: [0.1, 0.025, 0.3] }, { jit: 0.1 })
   // the mill house, plank walls, open saw shed on the outer side
-  const roof = roofColour(ctx.team, r)
+  const roof = roofOf(ctx.team, r, { shingle: 0.5, team: 0.3, tar: 0.2 })
   k.group({ p: [-0.22, 0, -0.08], r: [0, Math.PI / 2, 0] }, () => {
     const w = 0.5, d = 0.3, h = 0.28, rh = 0.2
     k.add(box(w + 0.02, 0.03, d + 0.02), P.stoneDark, { p: [0, 0.015, 0] }, { pattern: 'stone' })
@@ -486,7 +533,7 @@ function sawmill(k: Kit, ctx: BuildCtx, spinners: Spinner[]) {
 function workshop(k: Kit, ctx: BuildCtx) {
   const r = rng(ctx.seed * 19 + 1)
   lot(k, ctx, lin(P.gravel), 'cobble')
-  const roof = roofColour(ctx.team, r)
+  const roof = roofOf(ctx.team, r, { terracotta: 0.5, slate: 0.3, team: 0.2 })
   const glow = ctx.lit ? 1 : 0.08
   // stone smithy
   k.group({ p: [-0.16, 0, -0.12], r: [0, 0.1, 0] }, () => {
@@ -551,6 +598,7 @@ function market(k: Kit, ctx: BuildCtx) {
   stalls.forEach((s, i) => {
     k.group({ p: [s.x, 0, s.z], r: [0, s.a, 0] }, () => {
       const w = 0.24, d = 0.14
+      const stripe = i % 2 === 0 ? ctx.team.base : STALL_STRIPES.filter((c) => !nearTeam(ctx.team, c))[(i + ctx.seed) % 3]
       // counter
       k.add(box(w, 0.06, d * 0.6), P.boards, { p: [0, 0.03, 0.02] }, { pattern: 'boards' })
       k.add(box(w + 0.01, 0.01, d * 0.6 + 0.01), '#C8A57A', { p: [0, 0.065, 0.02] })
@@ -566,7 +614,7 @@ function market(k: Kit, ctx: BuildCtx) {
       for (const sx of [-1, 1]) for (const sz of [-1, 1]) k.add(cyl(0.006, 0.006, sz < 0 ? 0.2 : 0.17, 5), P.timberDark, { p: [sx * w / 2, sz < 0 ? 0.1 : 0.085, sz * d / 2] })
       const stripes = 6
       for (let j = 0; j < stripes; j++) {
-        const col = j % 2 ? P.cloth : ctx.team.base
+        const col = j % 2 ? P.cloth : stripe
         const sw = (w + 0.04) / stripes
         k.add(box(sw, 0.008, d + 0.06), col, { p: [-w / 2 - 0.02 + sw * (j + 0.5), 0.19, 0.0], r: [-0.25, 0, 0] }, { flutter: (_x, _y, z) => Math.max(0, z) * 0.03 })
         // scalloped valance
@@ -631,12 +679,12 @@ function hull(k: Kit, L: number, W: number, D: number, team: Team, o: Place = {}
 
 function harbor(k: Kit, ctx: BuildCtx, bobbers: Bobber[]) {
   const r = rng(ctx.seed * 23 + 9)
-  lot(k, ctx, mix(lin(P.lawn), lin(P.lawnLight), 0.3))
+  lot(k, ctx, lawn(ctx))
   const wd = ctx.waterDir
   const edge = ctx.spot.edgeDist / Math.max(0.5, Math.cos(wd)) / S
   const wy = ctx.waterY / S
   const jy = wy + 0.07
-  const roof = roofColour(ctx.team, r)
+  const roof = roofOf(ctx.team, r, { tar: 0.4, team: 0.35, terracotta: 0.25 })
   const ground = -LOT_Y / S
   k.group({ r: [0, -wd, 0] }, () => {
     // gravel yard from the street to the water
@@ -726,7 +774,7 @@ function harbor(k: Kit, ctx: BuildCtx, bobbers: Bobber[]) {
 function barracks(k: Kit, ctx: BuildCtx) {
   const r = rng(ctx.seed * 29 + 1)
   lot(k, ctx, lin(P.sand), 'sand')
-  const roof = roofColour(ctx.team, r)
+  const roof = roofOf(ctx.team, r, { slate: 0.55, team: 0.45 })
   // the long barrack on the inner side
   k.group({ p: [-0.36, 0, 0], r: [0, Math.PI / 2, 0] }, () => {
     const w = 0.66, d = 0.26, h = 0.22, rh = 0.16
@@ -762,7 +810,7 @@ function barracks(k: Kit, ctx: BuildCtx) {
 }
 
 function temple(k: Kit, ctx: BuildCtx) {
-  lot(k, ctx, mix(lin(P.lawn), lin(P.lawnLight), 0.5))
+  lot(k, ctx, lawn(ctx, 0.15))
   const white = '#F6F1E7'
   const roof = mix(lin(ctx.team.base), lin(ctx.team.dark), 0.25)
   const glow = ctx.lit ? 1 : 0.15
@@ -797,7 +845,7 @@ function temple(k: Kit, ctx: BuildCtx) {
       })
     }
     k.add(box(0.23, 0.025, 0.23), P.stone, { p: [tx, 0.66, 0] })
-    k.add(spire(0.14, 0.5, 8), roof, { p: [tx, 0.67, 0] }, { pattern: 'roof' })
+    k.add(spire(0.14, 0.5, 8), '#6FA597', { p: [tx, 0.67, 0] }, { pattern: 'roof', jit: 0.08 })
     k.add(cyl(0.004, 0.004, 0.1, 4), P.gold, { p: [tx, 1.21, 0] })
     k.add(sphere(0.016, 8, 6), P.gold, { p: [tx, 1.19, 0] })
     // the weathercock
@@ -858,10 +906,21 @@ function wallSegments(ctx: BuildCtx): [[number, number], [number, number]][] {
   return out
 }
 
+/** A trodden gravel yard in the middle of a lawn. */
+function yardPatch(k: Kit) {
+  const pts: [number, number][] = []
+  for (let i = 0; i < 10; i++) {
+    const a = (i / 10) * Math.PI * 2
+    const rr = 0.36 + Math.sin(a * 3) * 0.04
+    pts.push([Math.cos(a) * rr - 0.05, Math.sin(a) * rr * 0.9])
+  }
+  k.add(flat(pts, 0.003), mix(lin(P.gravel), lin('#C9B58F'), 0.4), {}, { pattern: 'sand' })
+}
+
 /** The yard behind walls and towers: a guardhouse, a rack of spears, a brazier, stores. */
 function guardYard(k: Kit, ctx: BuildCtx) {
   const r = rng(ctx.seed * 43 + 1)
-  const roof = roofColour(ctx.team, r)
+  const roof = roofOf(ctx.team, r, { slate: 0.7, team: 0.3 })
   k.group({ p: [-0.2, 0, -0.06], r: [0, Math.PI / 2 + 0.2, 0] }, () => {
     const w = 0.3, d = 0.22, h = 0.18
     k.add(box(w + 0.02, 0.03, d + 0.02), P.stoneDark, { p: [0, 0.015, 0] }, { pattern: 'stone' })
@@ -890,7 +949,8 @@ function guardYard(k: Kit, ctx: BuildCtx) {
 }
 
 function wall(k: Kit, ctx: BuildCtx) {
-  lot(k, ctx, mix(lin(P.gravel), lin('#BFAE8A'), 0.4), 'none')
+  lot(k, ctx, lawn(ctx))
+  yardPatch(k)
   const segs = wallSegments(ctx)
   const H = 0.3, T = 0.1
   segs.forEach(([a, b], i) => {
@@ -944,7 +1004,8 @@ function wall(k: Kit, ctx: BuildCtx) {
 }
 
 function tower(k: Kit, ctx: BuildCtx) {
-  lot(k, ctx, mix(lin(P.gravel), lin('#BFAE8A'), 0.4), 'none')
+  lot(k, ctx, lawn(ctx))
+  yardPatch(k)
   guardYard(k, ctx)
   // stand on the wall line, straight out from the plot
   const line = wallLine(ctx, 0.02)
@@ -1051,31 +1112,62 @@ export function square(k: Kit, ctx: { capital: boolean; team: Team; seed: number
 export function emptyLot(k: Kit, ctx: BuildCtx) {
   const rot = lotRot(ctx.spot)
   const r = rng(ctx.seed * 41 + 3)
-  lot(k, ctx, mix(lin(P.lawnLight), lin(P.lawn), 0.25 + r() * 0.2), 'grass', true)
-  // a surveyor's stake with a little flag in the town colour: this plot is free
-  const pts = hexPts(LOT_R - 0.08, rot)
-  const [sx, sz] = pts[Math.floor(r() * 6)]
-  k.add(box(0.012, 0.11, 0.012), '#D8C29A', { p: [sx, 0.055, sz] })
+  lot(k, ctx, lawn(ctx, 0.2), 'grass', true)
+  // a low dry-stone border, with a gap where a path would come in
+  const ring = hexPts(LOT_R - 0.035, rot)
+  const gap = Math.floor(r() * 6)
+  for (let e = 0; e < 6; e++) {
+    if (e === gap) continue
+    const [ax, az] = ring[e], [bx, bz] = ring[(e + 1) % 6]
+    const n = 6
+    for (let i = 0; i < n; i++) {
+      const t = (i + 0.5) / n
+      const x = ax + (bx - ax) * t, z = az + (bz - az) * t
+      const g = ico(0.024 + hash(ctx.seed * 6 + e, i) * 0.01, 0)
+      g.scale(1.3, 0.62, 1)
+      k.add(g, i % 3 ? P.stone : P.granite, { p: [x, 0.012, z], r: [0, hash(e, i) * 3, 0] }, { jit: 0.2, seed: e * 7 + i })
+    }
+  }
+  // surveyor's stakes at two corners with a string between, the near one flying the town colour
+  const c0 = Math.floor(r() * 6), c1 = (c0 + 1) % 6
+  const stakes = hexPts(LOT_R - 0.1, rot)
+  for (const c of [c0, c1]) k.add(box(0.012, 0.11, 0.012), '#D8C29A', { p: [stakes[c][0], 0.055, stakes[c][1]] })
+  const [sx, sz] = stakes[c0], [tx, tz] = stakes[c1]
   k.add(box(0.045, 0.028, 0.003), ctx.team.base, { p: [sx + 0.023, 0.095, sz] }, { flutter: (fx) => Math.max(0, fx + 0.022) * 0.25 })
-  // wild meadow: low tufts and flowers
+  k.add(box(Math.hypot(tx - sx, tz - sz), 0.003, 0.003), '#F4EFE6', { p: [(sx + tx) / 2, 0.085, (sz + tz) / 2], r: [0, -Math.atan2(tz - sz, tx - sx), 0] })
+  // a meadow of low tufts and drifts of wildflowers
   for (let i = 0; i < 4; i++) {
-    const a = r() * Math.PI * 2, d = 0.1 + r() * 0.32
-    k.group({ p: [Math.cos(a) * d, 0, Math.sin(a) * d], r: [0, r() * 6, 0], s: 0.32 + r() * 0.18 }, () => tuft(k))
+    const a = r() * Math.PI * 2, d = 0.1 + r() * 0.3
+    k.group({ p: [Math.cos(a) * d, 0, Math.sin(a) * d], r: [0, r() * 6, 0], s: 0.3 + r() * 0.15 }, () => tuft(k))
   }
-  for (let i = 0; i < 9; i++) {
-    const a = r() * Math.PI * 2, d = 0.08 + r() * 0.38
-    k.add(cyl(0.002, 0.002, 0.03, 3), BIOME.grass.dark, { p: [Math.cos(a) * d, 0.015, Math.sin(a) * d] })
-    k.add(ico(0.01, 0), ['#F4EFE2', '#F2CF5B', '#D99AB8', '#F4EFE2'][i % 4], { p: [Math.cos(a) * d, 0.032, Math.sin(a) * d] })
+  const blooms = [NATURE.poppy, NATURE.lavender, NATURE.buttercup, NATURE.daisy]
+  for (let dft = 0; dft < 3; dft++) {
+    const a0 = r() * Math.PI * 2, d0 = 0.12 + r() * 0.24
+    const col = blooms[Math.floor(r() * blooms.length)]
+    for (let i = 0; i < 6; i++) {
+      const x = Math.cos(a0) * d0 + (r() - 0.5) * 0.12, z = Math.sin(a0) * d0 + (r() - 0.5) * 0.12
+      const hgt = 0.025 + r() * 0.02
+      k.add(cyl(0.002, 0.002, hgt, 3, true), BIOME.grass.dark, { p: [x, hgt / 2, z] })
+      k.add(ico(0.009, 0), col, { p: [x, hgt, z] })
+    }
   }
-  // and sometimes materials waiting for a builder
-  const v = Math.floor(r() * 3)
+  // and on some, materials waiting for a builder
+  const v = Math.floor(r() * 4)
   if (v === 0) {
     k.group({ p: [-0.16, 0, 0.22], r: [0, r() * 3, 0] }, () => {
       for (let i = 0; i < 3; i++) for (let j = 0; j < 3 - i; j++) k.add(box(0.2, 0.014, 0.04), mix(lin('#D9B784'), lin('#C49A66'), hash(i * 3 + j, 4)), { p: [0, 0.008 + i * 0.015, (j - (2 - i) / 2) * 0.042] })
     })
   } else if (v === 1) {
-    k.group({ p: [0.2, 0, -0.18] }, () => {
+    k.group({ p: [0.18, 0, -0.18] }, () => {
       for (let i = 0; i < 5; i++) k.add(rbox(0.05, 0.03, 0.04, 0.006), i % 2 ? P.stone : P.granite, { p: [(i % 3) * 0.045 - 0.04, 0.015 + Math.floor(i / 3) * 0.03, (i % 2) * 0.03], r: [0, i * 0.7, 0] }, { pattern: 'stone' })
+    })
+  } else if (v === 2) {
+    // a hand cart with a load of bricks
+    k.group({ p: [0.12, 0, 0.2], r: [0, 0.6 + r(), 0] }, () => {
+      k.add(box(0.13, 0.025, 0.08), P.boards, { p: [0, 0.05, 0] }, { pattern: 'boards' })
+      for (const sz of [-1, 1]) k.add(cyl(0.032, 0.032, 0.01, 10), P.timberDark, { p: [0.01, 0.032, sz * 0.046], r: [Math.PI / 2, 0, 0] })
+      for (const sz of [-1, 1]) k.add(box(0.12, 0.006, 0.006), P.timberDark, { p: [-0.12, 0.055, sz * 0.03], r: [0, 0, 0.2] })
+      for (let i = 0; i < 6; i++) k.add(box(0.03, 0.016, 0.018), P.brick, { p: [-0.035 + (i % 3) * 0.035, 0.072 + Math.floor(i / 3) * 0.017, (i % 2) * 0.02 - 0.01] }, { jit: 0.2 })
     })
   }
 }

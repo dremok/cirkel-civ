@@ -3,7 +3,7 @@
 // plinth and the six neighbour tiles so the earth and rock layers line up across columns.
 
 import * as THREE from 'three'
-import { BIOME, NATURE } from '../../render/palette.ts'
+import { BIOME, FLAVOURS } from '../../render/palette.ts'
 import { PATTERN, type Pattern, type RGB, hash, lin, mix, shade } from './geo.ts'
 import { BOTTOM_Y } from './layout.ts'
 
@@ -45,12 +45,14 @@ export class TerrainBuilder {
   }
 }
 
+const ST = FLAVOURS.strata
 const C = {
-  earth: lin(NATURE.earth),
-  rockA: lin(NATURE.strataLight),
-  rockB: lin(NATURE.strataRock),
-  rockC: lin(NATURE.strataDeep),
-  base: lin(NATURE.base),
+  earth: lin(ST.ochre),
+  rust: lin(ST.rust),
+  rockA: lin(ST.umber),
+  rockB: lin(ST.plum),
+  rockC: lin(ST.deep),
+  base: lin(ST.base),
   high: lin(BIOME.mountain.base, 0.92),
   highLight: lin(BIOME.mountain.light),
   snow: lin(BIOME.snow.base),
@@ -75,18 +77,66 @@ export function sideColor(biome: string, top: number, y: number, jitter: number)
   } else if (biome === 'deep' || biome === 'shallow') {
     if (depth < 0.12) return shade(C.wetSand, 0.85)
   } else if (depth < 0.11) {
-    return lin(TURF[biome] ?? BIOME.grass.dark, 0.92)
+    return mix(lin(TURF[biome] ?? BIOME.grass.dark, 0.92), lin(ST.turfShadow), 0.35)
   } else if (depth < (biome === 'hills' ? 0.3 : 0.46)) {
     return C.earth
   }
+  // painted earth bands by world height, so they line up across neighbouring columns
   const yy = y + jitter
-  if (yy > CUTS[0]) return C.high
-  if (yy > CUTS[1]) return mix(C.high, C.rockA, 0.55)
-  if (yy > CUTS[2]) return C.rockA
-  if (yy > CUTS[3]) return C.rockB
-  if (yy > CUTS[4]) return C.rockC
+  if (yy > CUTS[0]) return biome === 'mountain' || biome === 'snow' ? C.high : mix(C.rockA, C.earth, 0.3)
+  if (yy > CUTS[1]) return mix(C.rockA, C.rust, 0.4)
+  if (yy > CUTS[2]) return C.rust
+  if (yy > CUTS[3]) return C.rockA
+  if (yy > CUTS[4]) return C.rockB
   return C.base
 }
+
+/** Smooth value noise in [0, 1). */
+export function vnoise(x: number, z: number, seed: number): number {
+  const ix = Math.floor(x), iz = Math.floor(z)
+  const fx = x - ix, fz = z - iz
+  const u = fx * fx * (3 - 2 * fx), v = fz * fz * (3 - 2 * fz)
+  const h = (a: number, b: number) => hash(a * 7919 + b * 104729, seed)
+  return (h(ix, iz) * (1 - u) + h(ix + 1, iz) * u) * (1 - v) + (h(ix, iz + 1) * (1 - u) + h(ix + 1, iz + 1) * u) * v
+}
+
+const FL = {
+  meadow: FLAVOURS.meadow.map((c) => lin(c)),
+  plains: FLAVOURS.plains.map((c) => lin(c)),
+  forest: FLAVOURS.forest.map((c) => lin(c)),
+  hills: FLAVOURS.hills.map((c) => lin(c)),
+  beach: FLAVOURS.beach.map((c) => lin(c)),
+  rock: FLAVOURS.rock.map((c) => lin(c)),
+}
+
+/** Blend smoothly around a list of hues by t (wraps). */
+export function flavour(list: RGB[], t: number): RGB {
+  const f = (((t % 1) + 1) % 1) * list.length
+  const i = Math.floor(f)
+  const k = f - i
+  const sm = k * k * (3 - 2 * k)
+  return mix(list[i % list.length], list[(i + 1) % list.length], sm)
+}
+
+/** Ground colour of a biome at a planar point: the hue drifts slowly, as on the world map. */
+export function groundFlavour(biome: string, x: number, z: number, moisture = 0.5): RGB {
+  const drift = vnoise(x * 0.12, z * 0.12, 3) * 0.7 + vnoise(x * 0.35, z * 0.35, 4) * 0.3
+  const j = 1 + (vnoise(x * 1.1, z * 1.1, 5) - 0.5) * 0.06
+  let c: RGB
+  switch (biome) {
+    case 'grass': c = flavour(FL.meadow, drift * 1.6 + moisture * 0.4); break
+    case 'plains': c = flavour(FL.plains, drift * 1.4 + moisture * 0.5); break
+    case 'forest': c = flavour(FL.forest, drift * 1.5); break
+    case 'hills': c = flavour(FL.hills, drift * 1.3); break
+    case 'mountain': c = mix(flavour(FL.rock, drift * 1.5), lin(BIOME.mountain.light), 0.2); break
+    case 'snow': return lin(BIOME.snow.base)
+    case 'beach': c = flavour(FL.beach, drift * 1.6); break
+    default: c = flavour(FL.beach, drift); break
+  }
+  return shade(c, j)
+}
+
+export const MEADOWS = FL.meadow
 
 /** Light through sea water loses red first: tint anything below the surface. */
 const SCATTER = lin('#2A8F98')

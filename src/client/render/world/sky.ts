@@ -142,7 +142,7 @@ void main() {
 
 export interface BackdropBoard { minX: number; minZ: number; maxX: number; maxZ: number; y: number }
 
-/** The visible backdrop: a soft gradient over a sea of clouds far below, drawn first. */
+/** The visible backdrop: a soft gradient over a sea of clouds far below. */
 export function buildSky(board: BackdropBoard, sunDir: THREE.Vector3) {
   const geo = new THREE.SphereGeometry(1, 16, 8)
   const mat = new THREE.ShaderMaterial({
@@ -163,13 +163,15 @@ export function buildSky(board: BackdropBoard, sunDir: THREE.Vector3) {
     },
     side: THREE.BackSide,
     depthWrite: false,
-    depthTest: false,
+    // Drawn after the opaque board at the far plane, so its clouds are only shaded where they show.
+    depthTest: true,
+    depthFunc: THREE.LessEqualDepth,
     toneMapped: false,
   })
   const mesh = new THREE.Mesh(geo, mat)
   mesh.scale.setScalar(400)
   mesh.frustumCulled = false
-  mesh.renderOrder = -10
+  mesh.renderOrder = 10
   mesh.name = 'backdrop'
   return {
     mesh,

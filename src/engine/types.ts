@@ -164,6 +164,8 @@ export type GameEvent =
   | { t: Tick; kind: 'buildFailed'; city: CityId; item: BuildingOrder; reason: string }
   | { t: Tick; kind: 'grow'; city: CityId; pop: number }
   | { t: Tick; kind: 'heal'; unit: UnitId; hp: number }
+  /** A city that was not under siege this turn repaired itself (new hp). */
+  | { t: Tick; kind: 'cityRepair'; city: CityId; hp: number }
   | { t: Tick; kind: 'eliminated'; player: PlayerId }
   | { t: Tick; kind: 'victory'; winner: PlayerId | 'draw' }
 

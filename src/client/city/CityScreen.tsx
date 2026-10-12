@@ -108,12 +108,12 @@ export function CityScreen(props: CityScreenProps & { sceneOptions?: Opts }) {
       setChoice(null)
     }
     let alive = true
-    requestAnimationFrame(() => {
-      if (!alive) return
-      scene.enter().then(() => alive && setPhase('live'))
-    })
+    scene.enter().then(() => alive && setPhase('live'))
+    // the panels never wait on the camera for long, even if frames are slow to come
+    const fallback = setTimeout(() => alive && setPhase((p) => (p === 'enter' ? 'live' : p)), 2400)
     return () => {
       alive = false
+      clearTimeout(fallback)
       scene.dispose()
       sceneRef.current = null
     }

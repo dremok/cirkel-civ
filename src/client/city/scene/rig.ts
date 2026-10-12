@@ -33,7 +33,7 @@ const ease = (t: number) => (t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2
 export function createRig(camera: THREE.PerspectiveCamera, dom: HTMLElement, radius: number): Rig {
   const goal: View = { x: 0, z: 0.3, yaw: 0, pitch: 0.9, dist: 20 }
   const cur: View = { ...goal }
-  let flight: { from: View; to: View; t: number; sec: number; done: () => void } | null = null
+  let flight: { from: View; to: View; t: number; sec: number; done: () => void; last: number } | null = null
   const tmp = new THREE.Vector3()
 
   function homeView(): View {
@@ -157,7 +157,11 @@ export function createRig(camera: THREE.PerspectiveCamera, dom: HTMLElement, rad
 
   function update(dt: number) {
     if (flight) {
-      flight.t += dt
+      // wall-clock, so it ends on time however slow the frames are; the first frame (when the
+      // shaders compile) does not count, and no frame skips more than a quarter of the move
+      const now = performance.now()
+      if (flight.last > 0) flight.t += Math.min((now - flight.last) / 1000, flight.sec * 0.25)
+      flight.last = now
       const t = ease(Math.min(1, flight.t / flight.sec))
       const f = flight.from, to = flight.to
       cur.x = f.x + (to.x - f.x) * t
@@ -185,7 +189,7 @@ export function createRig(camera: THREE.PerspectiveCamera, dom: HTMLElement, rad
 
   function fly(from: View, to: View, sec: number): Promise<void> {
     Object.assign(cur, from)
-    return new Promise((done) => { flight = { from: { ...from }, to: { ...to }, t: 0, sec, done } })
+    return new Promise((done) => { flight = { from: { ...from }, to: { ...to }, t: 0, sec, done, last: 0 } })
   }
 
   function set(v: View) {

@@ -5,7 +5,7 @@ import * as THREE from 'three'
 import { hexCorner } from '../../../engine/hex.ts'
 import { BIOME, NATURE } from '../palette.ts'
 import { GeoBuilder, lin, mix3 } from './builder.ts'
-import { BOTTOM_Y, WATER_Y, hexSdf, tileAtPoint, type Layout } from './layout.ts'
+import { WATER_Y, hexSdf, tileAtPoint, type Layout } from './layout.ts'
 import { patchMaterial } from './shading.ts'
 
 const FIELD_RES = 10 // texels per world unit
@@ -201,11 +201,14 @@ export function buildWater(layout: Layout) {
   // For N8AO: the surface occludes like a solid (soft darkening where it meets the shore).
   surface.userData.treatAsOpaque = true
 
-  // Rim walls: where the sea meets the board edge, a slab of tinted glass down to the seabed.
+  // Rim walls: where the sea meets the board edge, a slab of clear tinted glass down to the seabed:
+  // a bright meniscus at the surface, a luminous top band, deepening colour below.
   const b = new GeoBuilder(true)
-  const cTop = [...mix3(lin(BIOME.shallow.base), lin(BIOME.deep.light), 0.5), 0.6]
-  const cBot = [...lin(BIOME.deep.dark), 0.94]
-  const cLip = [...lin('#CBEDE6'), 0.95]
+  const cLip = [...lin('#EFFCF8'), 0.9]
+  const cBand = [...lin('#A9E9DE'), 0.32]
+  const cMid = [...mix3(lin(BIOME.shallow.base), lin(BIOME.shallow.light), 0.3), 0.46]
+  const cLow = [...mix3(lin(BIOME.deep.base), lin(BIOME.shallow.dark), 0.5), 0.72]
+  const BAND = 0.16
   for (const t of map.tiles) {
     if (!water[t.id]) continue
     const x0 = cx[t.id], z0 = cz[t.id]
@@ -213,27 +216,48 @@ export function buildWater(layout: Layout) {
       if (nb[t.id * 6 + i] >= 0) continue
       const a = hexCorner(i), c = hexCorner((i + 1) % 6)
       const yb = top[t.id]
-      const yl = WATER_Y - 0.022
+      const yl = WATER_Y - 0.014
+      const yBand = Math.max(yb, yl - BAND)
       const P = (p: { x: number; z: number }, y: number): [number, number, number] => [x0 + p.x, y, z0 + p.z]
       b.quad(P(a, WATER_Y), P(c, WATER_Y), P(c, yl), P(a, yl), cLip)
-      const span = WATER_Y - BOTTOM_Y
-      const k = Math.min(1, (WATER_Y - yb) / span)
-      const cMid = cTop.map((v, n) => v + (cBot[n] - v) * Math.min(1, k * 1.6))
-      b.quad(P(a, yl), P(c, yl), P(c, yb), P(a, yb), cTop, cTop, cMid, cMid)
+      b.quad(P(a, yl), P(c, yl), P(c, yBand), P(a, yBand), cBand, cBand, cMid, cMid)
+      if (yBand > yb) {
+        const k = Math.min(1, (yBand - yb) / 1.1)
+        const cBot = cMid.map((v, n) => v + (cLow[n] - v) * k)
+        b.quad(P(a, yBand), P(c, yBand), P(c, yb), P(a, yb), cMid, cMid, cBot, cBot)
+      }
     }
   }
   const rGeo = b.build()
   // Double-sided: through the surface you see the inside of the far walls, which closes the volume.
-  const rMat = patchMaterial(new THREE.MeshStandardMaterial({ vertexColors: true, transparent: true, depthWrite: false, roughness: 0.18, metalness: 0, envMapIntensity: 0.8, side: THREE.DoubleSide }), {
+  const rMat = patchMaterial(new THREE.MeshStandardMaterial({ vertexColors: true, transparent: true, depthWrite: false, roughness: 0.08, metalness: 0, envMapIntensity: 1.0, side: THREE.DoubleSide }), {
     name: 'rim',
     extra(shader) {
-      // Seen from inside, the walls are just more water, looked at through a long way of sea:
-      // deep, even colour and the same light on every facet.
-      shader.uniforms.uInner = { value: new THREE.Color(BIOME.deep.base).lerp(new THREE.Color(BIOME.shallow.dark), 0.35).multiplyScalar(1.5) }
+      shader.uniforms.uInnerTop = { value: new THREE.Color(BIOME.shallow.light).lerp(new THREE.Color(BIOME.shallow.base), 0.4) }
+      shader.uniforms.uInner = { value: new THREE.Color(BIOME.deep.light).lerp(new THREE.Color(BIOME.shallow.dark), 0.4) }
+      shader.uniforms.uGlow = { value: new THREE.Color(NATURE.sun) }
       shader.fragmentShader = shader.fragmentShader
-        .replace('#include <common>', '#include <common>\nuniform vec3 uInner;')
-        .replace('#include <color_fragment>', '#include <color_fragment>\nif (!gl_FrontFacing) diffuseColor.a = 0.94;')
-        .replace('#include <opaque_fragment>', 'if (!gl_FrontFacing) outgoingLight = uInner * (0.75 + 0.25 * wCloud);\n#include <opaque_fragment>')
+        .replace('#include <common>', '#include <common>\nuniform vec3 uInnerTop;\nuniform vec3 uInner;\nuniform vec3 uGlow;')
+        .replace(
+          '#include <color_fragment>',
+          `#include <color_fragment>
+          float rimD = ${WATER_Y.toFixed(3)} - vWorldP.y;
+          // Seen from inside, the far walls are just more water: lighter near the surface.
+          if (!gl_FrontFacing) diffuseColor.a = mix(0.55, 0.8, smoothstep(0.0, 0.9, rimD));`,
+        )
+        .replace(
+          '#include <opaque_fragment>',
+          `if (!gl_FrontFacing) outgoingLight = mix(uInnerTop, uInner, smoothstep(0.0, 0.9, rimD)) * (0.82 + 0.18 * wCloud);
+          else {
+            // Sunlight carried down through the water: a soft glow in the top band of the glass.
+            outgoingLight += uGlow * (1.0 - smoothstep(0.0, 0.35, rimD)) * 0.16 * wCloud;
+            // Glassy edge: the slab brightens toward grazing angles.
+            float fr = pow(1.0 - saturate(abs(dot(normal, normalize(vViewPosition)))), 3.0);
+            outgoingLight += vec3(0.85, 0.95, 0.95) * fr * 0.18;
+            diffuseColor.a = min(1.0, diffuseColor.a + fr * 0.2);
+          }
+          #include <opaque_fragment>`,
+        )
     },
   })
   const rim = new THREE.Mesh(rGeo, rMat)

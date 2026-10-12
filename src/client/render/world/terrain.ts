@@ -123,8 +123,9 @@ function sideColor(biome: Biome, top: number, y: number, jitter: number, turf: R
 
 const STRATA_CUTS = [0.85, 0.2, -0.5, -1.15, -1.72]
 
-/** Surface kind for the shader's top detail: 0 turf, 1 sand (wind ripples), 2 rock, 3 snow. */
-const DETAIL: Record<Biome, number> = { grass: 0, plains: 0, forest: 0, hills: 0, beach: 1, shallow: 1, deep: 1, mountain: 2, snow: 3 }
+/** Surface kind for the shader's top detail (see shading.ts): 0 meadow, 1 sand, 2 rock, 3 snow,
+ * 4 plains, 5 forest floor, 6 hills. */
+const DETAIL: Record<Biome, number> = { grass: 0, plains: 4, forest: 5, hills: 6, beach: 1, shallow: 1, deep: 1, mountain: 2, snow: 3 }
 
 /** Light travelling through sea water loses red first: tint anything below the surface. */
 const SCATTER = lin('#2A8F98')
