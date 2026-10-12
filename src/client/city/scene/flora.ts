@@ -231,8 +231,8 @@ export function mossyRock(k: Kit, seed: number) {
   const g = jitterGeo(ico(0.5, 0), 0.3, seed)
   g.scale(1, 0.62, 0.9)
   g.translate(0, 0.16, 0)
-  const ng = g.toNonIndexed()
-  g.dispose()
+  const ng = g.index ? g.toNonIndexed() : g
+  if (ng !== g) g.dispose()
   ng.computeVertexNormals()
   const n = ng.attributes.normal
   // split faces: up-facing ones get moss

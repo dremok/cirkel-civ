@@ -478,10 +478,14 @@ float sHex(vec2 p, float r) {
           float cd = dot(d, d);
           if (cd < bestC) { bestC = cd; deepK = uLand[i].z < -0.5 ? 1.0 : 0.0; }
         }
-        float depth = smoothstep(0.0, mix(2.4, 3.2, deepK), shore) * mix(0.55, 1.2, deepK);
-        vec3 wCol = mix(uShallow, uMid, smoothstep(0.02, 0.35, depth));
-        wCol = mix(wCol, uDeep, smoothstep(0.35, 1.1, depth));
-        float wAlpha = mix(0.25, 0.9, smoothstep(0.03, 1.0, depth));
+        // the world's ramp, stretched to this scale: luminous aquamarine at the shore, turquoise,
+        // then deep ultramarine-teal out over the deep tiles
+        float depth = mix(0.62 * smoothstep(0.0, 2.6, shore), 1.25 * smoothstep(0.0, 4.2, shore), deepK);
+        vec3 wCol = mix(uShallow, uMid, smoothstep(0.03, 0.42, depth));
+        wCol = mix(wCol, uDeep, smoothstep(0.42, 1.15, depth));
+        // a glow of sunlit sand under the clear shallows
+        wCol += vec3(0.05, 0.06, 0.03) * (1.0 - smoothstep(0.0, 0.25, depth));
+        float wAlpha = mix(0.3, 0.96, smoothstep(0.04, 0.55, depth));
         float wN = cNoise(vWorldP.xz * 1.6 + vec2(uTime * 0.09, -uTime * 0.07));
         float wN2 = cNoise(vWorldP.xz * 3.5 - vec2(uTime * 0.05, uTime * 0.08));
         float wEdge = 1.0 - smoothstep(0.03, 0.08 + 0.07 * wN, shore);
