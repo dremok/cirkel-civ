@@ -44,6 +44,8 @@ export const C = {
   lantern: '#FFD08A',
   forge: '#FF9C52',
   rope: '#C8B48C',
+  terracotta: '#C2643F',
+  slate: '#6E7686',
   linen: '#F3EADB',
 }
 
@@ -132,6 +134,23 @@ function cottage(k: Kit) {
   win(k, 0.035, 0.058, -d / 2, Math.PI)
   for (const sx of [-1, 1]) win(k, sx * w / 2, 0.11, 0, sx * Math.PI / 2, 0.018, 0.022)
   chimney(k, 0.042, -0.025, top + 0.03, top - 0.05)
+}
+
+function thatched(k: Kit) {
+  // a cottage under a deep straw roof with rounded eaves; the door and shutters carry the colour
+  const w = 0.15, d = 0.12, h = 0.075, rh = 0.085
+  footing(k, w, d)
+  k.wall(box(w, h, d), 1, { p: [0, h / 2 + 0.012, 0] })
+  for (const sx of [-1, 1]) k.wall(gableEnd(d, rh, 0.004), 1, { p: [sx * (w / 2 - 0.002), h + 0.012, 0] })
+  for (const g of gableRoof(w, d, rh, 0.026, 0.024)) k.add(g, C.straw, { p: [0, h + 0.006, 0] })
+  k.add(new THREE.CylinderGeometry(0.018, 0.018, w + 0.05, 8), C.strawDark, { p: [0, h + 0.012 + rh + 0.01, 0], r: [0, 0, Math.PI / 2] })
+  for (const sz of [-1, 1]) k.add(new THREE.CylinderGeometry(0.012, 0.012, w + 0.05, 8), C.strawDark, { p: [0, h + 0.002, sz * (d / 2 + 0.022)], r: [0, 0, Math.PI / 2] })
+  k.add(box(0.034, 0.05, 0.006), C.door, { p: [-0.03, 0.039, d / 2 + 0.003] })
+  k.team(box(0.03, 0.044, 0.004), 0.85, { p: [-0.03, 0.039, d / 2 + 0.006] })
+  win(k, 0.035, 0.055, d / 2, 0, 0.024, 0.024, true)
+  flowerBox(k, 0.035, 0.038, d / 2, 0, 4)
+  win(k, 0, 0.055, -d / 2, Math.PI)
+  chimney(k, 0.05, 0, h + 0.012 + rh + 0.035, h + rh * 0.4)
 }
 
 function townhouse(k: Kit) {
@@ -662,16 +681,16 @@ function garden(k: Kit, seed: number) {
 // The catalogue
 
 export type CityVariant =
-  | 'cottage' | 'townhouse' | 'longhouse' | 'hiphouse' | 'tallhouse'
+  | 'cottage' | 'thatched' | 'townhouse' | 'longhouse' | 'hiphouse' | 'tallhouse'
   | 'keep' | 'hall' | 'temple' | 'market' | 'workshop' | 'barracks'
   | 'farmWheat' | 'farmGreens' | 'farmFlowers' | 'farmWheatTar' | 'sawmill' | 'jetty' | 'stairs' | 'boat'
   | 'wall' | 'gate' | 'tower'
   | 'ground' | 'lanterns' | 'road' | 'well' | 'linden' | 'blossom' | 'bushes' | 'garden'
 
-export const HOUSES: CityVariant[] = ['cottage', 'townhouse', 'longhouse', 'hiphouse', 'tallhouse']
+export const HOUSES: CityVariant[] = ['cottage', 'thatched', 'townhouse', 'longhouse', 'hiphouse', 'tallhouse']
 
 const BUILDERS: Record<CityVariant, (k: Kit) => void> = {
-  cottage, townhouse, longhouse, hiphouse, tallhouse,
+  cottage, thatched, townhouse, longhouse, hiphouse, tallhouse,
   keep, hall, temple, market, workshop, barracks,
   farmWheat: (k) => farmstead(k, true, 'wheat', 1),
   farmGreens: (k) => farmstead(k, true, 'greens', 2),

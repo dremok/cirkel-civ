@@ -17,18 +17,21 @@ import type { Label, Labels } from './labels.ts'
 
 export const PLAZA_Y = 0.014
 
+const TERRACOTTA = new THREE.Color('#C2643F')
+const SLATE = new THREE.Color('#6E7686')
+
 const INNER_R = 0.5
 const CORNER_R = 0.715 // outer plots facing one neighbour (towards an edge midpoint)
 const SIDE_R = 0.785 // outer plots facing two neighbours (towards a tile corner)
 
 const ALL_VARIANTS: CityVariant[] = [
-  'cottage', 'townhouse', 'longhouse', 'hiphouse', 'tallhouse', 'keep', 'hall', 'temple', 'market', 'workshop', 'barracks',
+  'cottage', 'thatched', 'townhouse', 'longhouse', 'hiphouse', 'tallhouse', 'keep', 'hall', 'temple', 'market', 'workshop', 'barracks',
   'farmWheat', 'farmGreens', 'farmFlowers', 'farmWheatTar', 'sawmill', 'jetty', 'stairs', 'boat', 'wall', 'gate', 'tower',
   'ground', 'lanterns', 'road', 'well', 'linden', 'blossom', 'bushes', 'garden',
 ]
 const FLAT: Set<CityVariant> = new Set(['ground', 'road', 'garden'])
 const OUTSIDE: Set<CityVariant> = new Set(['jetty', 'stairs', 'boat'])
-const CAPACITY: Partial<Record<CityVariant, number>> = { cottage: 640, townhouse: 640, hiphouse: 640, longhouse: 400, tallhouse: 400, wall: 400, tower: 400 }
+const CAPACITY: Partial<Record<CityVariant, number>> = { cottage: 640, thatched: 400, townhouse: 640, hiphouse: 640, longhouse: 400, tallhouse: 400, wall: 400, tower: 400 }
 
 /** One placed building in tile-local space (y relative to the tile top). */
 export interface Spec {
@@ -41,6 +44,8 @@ export interface Spec {
   s: number | [number, number, number]
   wall: THREE.Color
   shade: number
+  /** Roof: a tone of the player colour, or a fixed colour (terracotta, slate). */
+  roof?: 'base' | 'light' | 'dark' | THREE.Color
   order: number
   bob?: number
 }
@@ -69,6 +74,8 @@ export interface CityVis {
   /** Roof colour transition (capture sweep). */
   fromColor: THREE.Color
   toColor: THREE.Color
+  fromTones: { base: THREE.Color; light: THREE.Color; dark: THREE.Color }
+  toTones: { base: THREE.Color; light: THREE.Color; dark: THREE.Color }
   sweep: number
   smoke: { at: THREE.Vector3; t: number; key: string }[]
   plaque: Label
@@ -131,14 +138,14 @@ export function planCity(board: Board, map: GameMap, city: City, team: THREE.Col
   let order = 1
   const push = (s: Omit<Spec, 'wall' | 'shade' | 'order' | 'y' | 's'> & Partial<Spec>) =>
     out.push({ y: 0, s: 1, wall: neutralPlaster, shade: 1, order: order++, ...s })
-  const atPlot = (i: number, v: CityVariant, o: { out?: boolean; dr?: number; key?: string; shade?: number; wall?: THREE.Color; s?: number } = {}) => {
+  const atPlot = (i: number, v: CityVariant, o: { out?: boolean; dr?: number; key?: string; shade?: number; wall?: THREE.Color; s?: number; roof?: Spec['roof'] } = {}) => {
     const { a, r } = plotAt(i)
     const rr = r + (o.dr ?? 0)
     const ja = (rnd() - 0.5) * 0.06
     push({
       key: o.key ?? `${v}:${i}`, v, x: Math.cos(a + ja) * rr, z: Math.sin(a + ja) * rr,
       yaw: (o.out ? yawTo(a) : yawTo(a + Math.PI)) + (rnd() - 0.5) * 0.22,
-      wall: o.wall ?? plaster(), shade: o.shade ?? 1, s: (o.s ?? 1) * 1.12,
+      wall: o.wall ?? plaster(), shade: o.shade ?? 1, s: (o.s ?? 1) * 1.12, roof: o.roof,
     })
   }
   const house = (i: number) => {
@@ -146,9 +153,11 @@ export function planCity(board: Board, map: GameMap, city: City, team: THREE.Col
     const w = rnd()
     let v: CityVariant
     if (ring === 1) v = w < 0.3 ? 'townhouse' : w < 0.52 ? 'tallhouse' : w < 0.75 ? 'hiphouse' : 'cottage'
-    else v = w < 0.38 ? 'cottage' : w < 0.58 ? 'longhouse' : w < 0.78 ? 'hiphouse' : 'townhouse'
-    const shades = [1, 0.86, 1.1, 0.94]
-    atPlot(i, v, { key: `house:${i}`, shade: shades[Math.floor(rnd() * shades.length)], s: 0.94 + rnd() * 0.12 })
+    else v = w < 0.28 ? 'cottage' : w < 0.46 ? 'thatched' : w < 0.62 ? 'longhouse' : w < 0.8 ? 'hiphouse' : 'townhouse'
+    // roofs mostly in the player's tones, now and then terracotta or slate
+    const r = rnd()
+    const roof: Spec['roof'] = r < 0.42 ? 'base' : r < 0.6 ? 'light' : r < 0.78 ? 'dark' : r < 0.9 ? TERRACOTTA : SLATE
+    atPlot(i, v, { key: `house:${i}`, shade: 0.94 + rnd() * 0.12, s: 0.94 + rnd() * 0.12, roof })
   }
   const farm = (i: number) => {
     const c = rnd()
@@ -316,16 +325,16 @@ export class CityLayer {
   private time = 0
 
   constructor(private board: Board, root: THREE.Object3D, private labels: Labels, private fx: Fx) {
-    const mat = pieceMaterial({ wall: true, roughness: 0.72, flutter: 0.006 })
+    const mat = pieceMaterial({ wall: true, roughness: 0.72, flutter: 0.006, tones: true })
     mat.side = THREE.DoubleSide
-    const groundMat = pieceMaterial({ wall: true, roughness: 0.92 })
+    const groundMat = pieceMaterial({ wall: true, roughness: 0.92, tones: true })
     groundMat.polygonOffset = true
     groundMat.polygonOffsetFactor = -1
     groundMat.polygonOffsetUnits = -2
     for (const v of ALL_VARIANTS) {
       const model = cityModel(v)
       const flatV = FLAT.has(v)
-      this.batches.set(v, new Batch(root, [{ geo: model.geo, mat: flatV ? groundMat : mat, shadow: !flatV, receive: true }], CAPACITY[v] ?? 96, { aWall: 3 }))
+      this.batches.set(v, new Batch(root, [{ geo: model.geo, mat: flatV ? groundMat : mat, shadow: !flatV, receive: true }], CAPACITY[v] ?? 96, { aWall: 3, aTeamLight: 3, aTeamDark: 3 }))
     }
   }
 
@@ -378,7 +387,7 @@ export class CityLayer {
     const vis: CityVis = {
       id: city.id, owner: city.owner, colorIdx, tile: city.tile, name: city.name, pop: city.pop, hp: city.hp,
       walls: city.walls, capital: city.capital, planKey: '', pieces: new Map(),
-      fromColor: tc.base.clone(), toColor: tc.base.clone(), sweep: 1, smoke: [], plaque, popEl, hpEl, shown: !animate, dirty: true,
+      fromColor: tc.base.clone(), toColor: tc.base.clone(), fromTones: tc, toTones: tc, sweep: 1, smoke: [], plaque, popEl, hpEl, shown: !animate, dirty: true,
     }
     this.cities.set(city.id, vis)
     this.replan(map, city, animate)
@@ -471,6 +480,8 @@ export class CityLayer {
     const tc = teamColors(colorIdx)
     vis.fromColor.copy(teamColors(vis.colorIdx).base)
     vis.toColor.copy(tc.base)
+    vis.fromTones = teamColors(vis.colorIdx)
+    vis.toTones = tc
     vis.sweep = animate ? 0 : 1
     vis.owner = owner
     vis.colorIdx = colorIdx
@@ -590,8 +601,12 @@ export class CityLayer {
       } else q.setFromAxisAngle(this.axisY, sp.yaw)
       m.compose(v.set(top.x + sp.x * R, y, top.z + sp.z * R), q, s.set(sc[0] * k[0] * R * (1 + hop * 0.06), sc[1] * k[1] * R, sc[2] * k[2] * R * (1 + hop * 0.06)))
       b.setMatrix(p.slot, r <= 0 ? m.makeScale(0, 0, 0) : m)
-      this.c.copy(t < 0.5 ? vis.fromColor : vis.toColor).multiplyScalar(sp.shade)
+      const tone = t < 0.5 ? vis.fromTones : vis.toTones
+      const roof = sp.roof ?? 'base'
+      this.c.copy(roof instanceof THREE.Color ? roof : tone[roof]).multiplyScalar(sp.shade)
       b.setColor(p.slot, this.c)
+      b.setExtra('aTeamLight', p.slot, tone.light.r, tone.light.g, tone.light.b)
+      b.setExtra('aTeamDark', p.slot, tone.dark.r, tone.dark.g, tone.dark.b)
     }
   }
 

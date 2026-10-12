@@ -4,7 +4,10 @@
 //   1 wall   : vertex colour x the instance's own plaster colour (aWall)
 //   2 team   : vertex colour x the instance colour (the player colour, so captures can sweep it)
 //   3 glow   : vertex colour, lit from within (warm windows, lanterns)
-// Extra channels: `flutter` (cloth, 0 = pinned) and `idle` (how much a figure breathes and sways).
+//   4 light  : vertex colour x the player's light tone (aTeamLight)
+//   5 dark   : vertex colour x the player's dark tone (aTeamDark)
+// Extra channels: `flutter` (cloth, 0 = pinned) and `idle` (how much a figure breathes and sways;
+// 2 = a nodding head, for the horse).
 import * as THREE from 'three'
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
 
@@ -21,6 +24,8 @@ export const PAINT_FIXED = 0
 export const PAINT_WALL = 1
 export const PAINT_TEAM = 2
 export const PAINT_GLOW = 3
+export const PAINT_TEAM_LIGHT = 4
+export const PAINT_TEAM_DARK = 5
 
 const tmpM = new THREE.Matrix4()
 const tmpQ = new THREE.Quaternion()
@@ -69,6 +74,16 @@ export class Kit {
   /** A team-coloured part; `shade` multiplies the player colour (1 = base). */
   team(g: THREE.BufferGeometry, shade = 1, o: Place = {}): void {
     this.push(g, new THREE.Color(shade, shade, shade), PAINT_TEAM, o)
+  }
+
+  /** A part in the player's light tone. */
+  teamLight(g: THREE.BufferGeometry, shade = 1, o: Place = {}): void {
+    this.push(g, new THREE.Color(shade, shade, shade), PAINT_TEAM_LIGHT, o)
+  }
+
+  /** A part in the player's dark tone. */
+  teamDark(g: THREE.BufferGeometry, shade = 1, o: Place = {}): void {
+    this.push(g, new THREE.Color(shade, shade, shade), PAINT_TEAM_DARK, o)
   }
 
   /** A part lit from within. */
@@ -220,6 +235,8 @@ export interface PieceMatOpts {
   wall?: boolean
   /** Instances carry `aPhase` and figures breathe and sway. */
   idle?: boolean
+  /** Instances carry `aTeamLight` and `aTeamDark` (the player's light and dark tones). */
+  tones?: boolean
 }
 
 export function pieceMaterial(o: PieceMatOpts = {}): THREE.MeshStandardMaterial {
@@ -234,6 +251,7 @@ export function pieceMaterial(o: PieceMatOpts = {}): THREE.MeshStandardMaterial 
         attribute float idle;
         ${o.wall ? 'attribute vec3 aWall;' : ''}
         ${o.idle ? 'attribute float aPhase;' : ''}
+        ${o.tones ? 'attribute vec3 aTeamLight; attribute vec3 aTeamDark;' : ''}
         uniform float uPieceTime;
         varying float vGlow;`)
       .replace('#include <color_vertex>', `
@@ -244,7 +262,11 @@ export function pieceMaterial(o: PieceMatOpts = {}): THREE.MeshStandardMaterial 
         vColor.rgb *= mix(vec3(1.0), instanceColor.rgb, pTeam);
         #endif
         ${o.wall ? 'float pWall = step(0.5, paint) * (1.0 - step(1.5, paint)); vColor.rgb *= mix(vec3(1.0), aWall, pWall);' : ''}
-        vGlow = step(2.5, paint);`)
+        ${o.tones ? `
+        float pLight = step(3.5, paint) * (1.0 - step(4.5, paint));
+        float pDark = step(4.5, paint);
+        vColor.rgb *= mix(vec3(1.0), aTeamLight, pLight) * mix(vec3(1.0), aTeamDark, pDark);` : ''}
+        vGlow = step(2.5, paint) * (1.0 - step(3.5, paint));`)
       .replace('#include <begin_vertex>', `#include <begin_vertex>
         {
           float ph = 0.0;
@@ -255,11 +277,14 @@ export function pieceMaterial(o: PieceMatOpts = {}): THREE.MeshStandardMaterial 
           float t = uPieceTime;
           transformed.z += flutter * ${amp} * (sin(t * 4.3 + ph - transformed.x * 18.0 - transformed.y * 9.0) + 0.45 * sin(t * 7.1 + ph * 1.3 - transformed.x * 31.0));
           ${o.idle ? `
-          // breathing and a slow shift of weight, pivoting at the feet
+          // breathing and a slow shift of weight, pivoting at the feet; a horse nods its head
           float hgt = max(0.0, transformed.y - 0.06);
-          transformed.y += idle * hgt * 0.016 * sin(t * 1.9 + ph);
-          transformed.x += idle * hgt * 0.022 * sin(t * 0.73 + ph * 2.1);
-          transformed.z += idle * hgt * 0.012 * sin(t * 0.61 + ph * 3.3);` : ''}
+          float w = min(idle, 1.0);
+          float nod = step(1.5, idle);
+          transformed.y += w * hgt * 0.016 * sin(t * 1.9 + ph) + nod * 0.012 * sin(t * 1.3 + ph) * (0.5 + 0.5 * sin(t * 0.37 + ph));
+          transformed.z += nod * 0.008 * sin(t * 1.3 + ph + 0.8);
+          transformed.x += w * hgt * 0.022 * sin(t * 0.73 + ph * 2.1);
+          transformed.z += w * hgt * 0.012 * sin(t * 0.61 + ph * 3.3);` : ''}
         }`)
     sh.fragmentShader = sh.fragmentShader
       .replace('#include <common>', `#include <common>
@@ -269,6 +294,6 @@ export function pieceMaterial(o: PieceMatOpts = {}): THREE.MeshStandardMaterial 
       .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
         totalEmissiveRadiance += vGlow * diffuseColor.rgb * uGlowColor * uGlowStrength;`)
   }
-  m.customProgramCacheKey = () => `piece:${amp}:${o.wall ? 1 : 0}:${o.idle ? 1 : 0}`
+  m.customProgramCacheKey = () => `piece:${amp}:${o.wall ? 1 : 0}:${o.idle ? 1 : 0}:${o.tones ? 1 : 0}`
   return m
 }

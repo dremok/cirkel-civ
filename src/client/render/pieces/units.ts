@@ -62,7 +62,7 @@ export class UnitLayer {
   private axis = new THREE.Vector3()
 
   constructor(private board: Board, root: THREE.Object3D, private standY: (tile: TileId) => number, private faceYaw: () => number = () => 0) {
-    const body = pieceMaterial({ roughness: 0.58, idle: true })
+    const body = pieceMaterial({ roughness: 0.58, idle: true, tones: true })
     body.side = THREE.DoubleSide
     const sil = silhouetteMaterial()
     for (const type of TYPES) {
@@ -70,7 +70,7 @@ export class UnitLayer {
       const b = new Batch(root, [
         { geo: g.geo, mat: body, shadow: true, receive: true },
         { geo: g.sil, mat: sil, order: 7 },
-      ], CAP, { aSil: 1, aPhase: 1 })
+      ], CAP, { aSil: 1, aPhase: 1, aTeamLight: 3, aTeamDark: 3 })
       // the silhouette takes the team colour
       b.meshes[1].instanceColor = b.meshes[0].instanceColor
       this.batches.set(type, b)
@@ -177,6 +177,8 @@ export class UnitLayer {
     const tc = teamColors(vis.colorIdx)
     const b = this.batches.get(vis.type)!
     b.setColor(vis.slot, tc.base, 0)
+    b.setExtra('aTeamLight', vis.slot, tc.light.r, tc.light.g, tc.light.b)
+    b.setExtra('aTeamDark', vis.slot, tc.dark.r, tc.dark.g, tc.dark.b)
     b.setExtra('aPhase', vis.slot, hash01(vis.id, 13) * 40)
     this.glyphs.setColor(vis.deco, tc.base)
     vis.dirty = true
