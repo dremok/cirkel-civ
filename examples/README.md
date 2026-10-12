@@ -28,7 +28,8 @@ Every request may carry an `id`; the response echoes it. Errors come back as
 
 **reset config:** `seed` (string), `players` (2 to 4), `agents` (the seats you control, default
 `[0]`), `opponent` (`"bot"`, `"random"` or `"idle"`, plays every other seat), `mapSize` (`"small"`,
-`"medium"`, `"large"`), `maxTurns` (default 60), `obs` (`"state"`, `"grid"` or `"both"`).
+`"medium"`, `"large"`), `maxTurns` (default 60), `fog` (fog of war, default `true`), `obs` (`"state"`,
+`"grid"` or `"both"`).
 
 Two-player maps are point-symmetric and both seats start on equal terms, so self-play from either
 seat is fair.
@@ -62,13 +63,16 @@ seat is fair.
 
 `observations` has one entry per agent seat, keyed by seat number as a string:
 
-- `state`: the full `GameState` from that seat's point of view (see `src/engine/types.ts`): every
-  unit and city, including each city's buildings (`interior.plots`), is visible (no fog of war yet),
-  but other players' paths, founding flags, targets, constructions and stores are hidden. The static
-  `map` is included only in the reset response.
+- `state`: the `GameState` from that seat's point of view (see `src/engine/types.ts`). Other players'
+  paths, founding flags, targets, constructions and stores are always hidden. With fog of war (the
+  default) enemy units appear only while in sight, rival cities only while in sight or as last seen,
+  and `fog[seat]` holds what the seat has explored; without fog every unit and city is shown. The
+  static `map` is included only in the reset response (it is the whole map: mask it with `explored`
+  if your agent should not know the land it has not seen).
 - `grid` (with `obs: "grid"` or `"both"`): flat row-major arrays of length `width x height`, index =
   tile id, -1 where empty: `unitOwner`, `unitType`, `unitHp`, `unitStance`, `cityOwner`, `cityPop`,
-  `cityHp`, `cityWalls`. The reset response's `map` adds `tileHeight` and `biome` planes and the index
+  `cityHp`, `cityWalls` (from the seat's view), plus 1/0 planes `visible` (in sight now) and
+  `explored` (ever seen). The reset response's `map` adds `tileHeight` and `biome` planes and the index
   tables (`biomes`, `unitTypes`, `stances`).
 
 Tiles are pointy-top hexes in an odd-r offset grid: tile id = `row x width + col`, and odd rows are

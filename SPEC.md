@@ -1,4 +1,4 @@
-# Cirkel-Civ: spec v0.1
+# Cirkel-Civ: spec v0.3
 
 *Working title. The game gets a real name later.*
 
@@ -115,6 +115,17 @@ Later a stance can be replaced by a real commander: a small trained model or a s
 - Climbing costs extra movement. A height difference of more than two levels is a cliff that cannot be crossed.
 - The map is generated from a seed, so the same seed gives the same world. With two players the map is point-symmetric, so both start on exactly equal terms.
 
+## 7b. Fog of war: discovering the map
+
+The world starts hidden under clouds, and you discover it as you go, like in Civ. It is an option when a game is created, on by default.
+
+- **Sight.** Units see 2 tiles around them and cities 3. Standing on hills gives one more.
+- **Height blocks sight.** A ridge or a forest between you and lower ground hides what lies behind it. A peak behind a forest can still be seen.
+- **You cannot shoot what you cannot see.** With fog, archers and cities only shoot targets in their own line of sight, so archers on high ground shoot over the forest.
+- **Three states.** Unexplored land lies under clouds. Land you have seen but cannot see right now is veiled: you see the terrain, but not who is there. Rival cities there are shown as you last saw them.
+- **During resolution** your units uncover land tick by tick, and enemies appear and disappear in the replay as they enter and leave your sight. Anyone who attacks you is revealed.
+- Orders into the unknown are allowed. The unit finds out on the way whether the path holds.
+
 ## 8. Architecture
 
 ```
@@ -138,18 +149,18 @@ The engine is a pure function: `resolve(state, everyone's orders) → new state 
 - A 3D hex map with heights, four unit types, cities, growth, conquest and victory.
 - The city view with quarters, buildings and directional walls (5b).
 - Sound: effects, ambience and music.
+- Fog of war: discover the map as you go (7b), optional per game.
 - Works on phones.
 - A simple bot and a headless simulation script.
 
 **Not yet:**
-- Fog of war. Kept out until the core rules feel right, but the server already sends each player their own view, so it can be added.
 - Technologies, diplomacy, trade, weather and physics, story.
 - Real AI commanders and trained agents.
 
 ## 10. Open questions
 
 1. Should a meeting engagement stop both units for the rest of the turn, or only for one tick?
-2. Should the game have fog of war early? It makes height and scouting matter more, but turns become more guesswork.
+2. Fog of war is in (7b). Should scouting get its own unit, and should towers or temples see further?
 3. How long should turns be in a game between friends? No time limit (play over several days), or, say, 2 minutes?
 4. What should the long horizon be about: technology, culture, religion, or something entirely our own?
 5. How should a game be won? Today: take every rival city, or the best score after 60 turns. With the current rules equal opponents rarely take all of each other's cities, so most games end on score. Options: a capital victory (take every rival capital), a domination victory (hold two thirds of all cities for a few turns), longer games, or fewer cities.
@@ -164,3 +175,4 @@ The engine is a pure function: `resolve(state, everyone's orders) → new state 
 
 - **v0.1** (12 October 2026): first spec. The game is in English.
 - **v0.2** (12 October 2026): the city interior (5b) is in the game: buildings drive the economy, walls and towers face a direction. Open question 5 added (how to win).
+- **v0.3** (13 October 2026): fog of war (7b). The map starts under clouds and is discovered as you go; height blocks sight. On by default, optional per game.

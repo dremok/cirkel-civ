@@ -4,7 +4,7 @@ import { createGame, rotateInterior, rotatePlot } from '../src/engine/game.ts'
 import { mirror } from '../src/engine/mapgen.ts'
 import { observe } from '../src/engine/observe.ts'
 import { resolveTurn } from '../src/engine/rules.ts'
-import type { BuildItem, GameState, PlayerId, PlayerOrders } from '../src/engine/types.ts'
+import type { BuildItem, City, GameState, PlayerId, PlayerOrders } from '../src/engine/types.ts'
 
 type Policy = (s: GameState, p: PlayerId, seed: number) => PlayerOrders
 const players = (n: number) => Array.from({ length: n }, (_, i) => ({ name: `P${i}`, kind: 'bot' as const }))
@@ -52,10 +52,13 @@ describe('whole games', () => {
     const M = (t: number) => mirror(t, s.map.width, s.map.height)
     // A 180° turn: tiles mirror, and every plot inside a city turns by three sides.
     const flipBuild = (b: BuildItem | null): BuildItem | null => (b && typeof b === 'object' ? { ...b, plot: rotatePlot(b.plot, 3) } : b)
+    const flipCity = (c: City): City => ({ ...c, tile: M(c.tile), build: flipBuild(c.build), interior: rotateInterior(c.interior, 3) })
+    // Tile ids mirror as n - 1 - id, so an explored string simply reverses.
     const flip = (st: GameState): GameState => ({
       ...st,
       units: st.units.map((u) => ({ ...u, tile: M(u.tile), path: u.path.map(M), target: u.target === null ? null : M(u.target) })),
-      cities: st.cities.map((c) => ({ ...c, tile: M(c.tile), build: flipBuild(c.build), interior: rotateInterior(c.interior, 3) })),
+      cities: st.cities.map(flipCity),
+      fog: st.fog && st.fog.map((m) => ({ ...m, explored: [...m.explored].reverse().join(''), cities: m.cities.map(flipCity) })),
     })
     const flipOrders = (o: Record<number, PlayerOrders>) =>
       Object.fromEntries(
@@ -114,8 +117,8 @@ describe('engine portability', () => {
 })
 
 describe('observe', () => {
-  it('hides other players plans but shows everything on the board', () => {
-    let s = createGame({ seed: 'obs', players: players(2) })
+  it('without fog: hides other players plans but shows everything on the board', () => {
+    let s = createGame({ seed: 'obs', players: players(2), fog: false })
     s = resolveTurn(s, { 0: botOrders(s, 0, 0), 1: botOrders(s, 1, 0) }).state
     const withPlans = { ...s, units: s.units.map((u) => ({ ...u, path: [u.tile], found: true, target: 3 })) }
     const view = observe(withPlans, 0)

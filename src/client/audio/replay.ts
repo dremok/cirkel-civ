@@ -98,7 +98,12 @@ export function scheduleReplay(host: ReplayHost, events: GameEvent[], tickSecond
   }
 }
 
-const CAP: Partial<Record<SfxSound, number>> = { clash: 3, hit: 4, fall: 3, cityHit: 2, capture: 1, found: 1, fail: 1, muster: 1, built: 1, grow: 1, halt: 1 }
+const CAP: Partial<Record<SfxSound, number>> = { clash: 3, hit: 4, fall: 3, cityHit: 2, capture: 1, found: 1, fail: 1, muster: 1, built: 1, grow: 1, halt: 1, spotted: 1, explore: 1 }
+
+// Fog: newly explored tiles add up across ticks and sound as one breath once there are enough of
+// them, never closer than EXPLORE_GAP seconds apart (a rider revealing a tile a tick stays quiet).
+const EXPLORE_MIN_TILES = 4
+const EXPLORE_GAP = 2.4
 
 function buildPlan(events: GameEvent[], secPerTick: number, opts: ReplayAudioOptions) {
   const k = secPerTick / 0.5 // timings are authored for 0.5 s per tick, like the visual replay
@@ -127,12 +132,16 @@ function buildPlan(events: GameEvent[], secPerTick: number, opts: ReplayAudioOpt
       tileOf.set(e.unit.id, e.unit.tile)
     }
     if (e.kind === 'found') cityTile.set(e.city.id, e.city.tile)
+    if (e.kind === 'spotted') typeOf.set(e.unit.id, e.unit.type)
   }
   const targetTile = (t: Target): TileId | null => ('unit' in t ? tileOf.get(t.unit) ?? null : cityTile.get(t.city) ?? null)
 
   const plan: TickPlan[] = []
   let S = 0.12 * k
   let combat = 0
+  let explored = 0
+  let exploredTile: TileId | null = null
+  let lastExplore = -Infinity
   for (const t of ticks) {
     const list = byTick.get(t) ?? []
     const cues: Cue[] = []
@@ -251,9 +260,24 @@ function buildPlan(events: GameEvent[], secPerTick: number, opts: ReplayAudioOpt
           cues.push({ at: 0.6 * k, sound: mine ? 'victory' : 'defeat', tile: null, volume: 1 })
           break
         }
+        case 'spotted': {
+          tileOf.set(e.unit.id, e.unit.tile)
+          const n = list.filter((x) => x.kind === 'spotted').length
+          add('spotted', 0, e.unit.tile, 0.85 + 0.15 * Math.min(1, (n - 1) / 2))
+          break
+        }
+        case 'explore':
+          explored += e.tiles.length
+          if (e.tiles.length) exploredTile = e.tiles[e.tiles.length >> 1]
+          break
         default:
           break
       }
+    }
+    if (explored >= EXPLORE_MIN_TILES && S + 0.1 * k - lastExplore >= EXPLORE_GAP) {
+      add('explore', 0.1 * k, exploredTile, Math.min(1, 0.45 + 0.2 * Math.log2(explored / EXPLORE_MIN_TILES)))
+      lastExplore = S + 0.1 * k
+      explored = 0
     }
     // A defeat already announced by 'eliminated' needs no second sting.
     const stings = cues.filter((c) => c.sound === 'victory' || c.sound === 'defeat')

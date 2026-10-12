@@ -2,6 +2,7 @@ import { CITY_MAX_HP, CITY_NAMES, DEFAULT_MAX_TURNS, UNIT_MAX_HP } from './confi
 import { PLOTS, buildingYield, canPlace, newInterior } from './city.ts'
 import { AXIAL_DIRS, SQRT3, hexCenter, neighbors } from './hex.ts'
 import { generateMap, mirror } from './mapgen.ts'
+import { initialFog } from './vision.ts'
 import { canStep } from './terrain.ts'
 import type { BuildingType, City, CityInterior, GameConfig, GameMap, GameState, PlayerId, TileId, Unit, UnitType } from './types.ts'
 
@@ -20,6 +21,7 @@ export function createGame(cfg: GameConfig): GameState {
     cities: [],
     nextId: 1,
     winner: null,
+    fog: null,
   }
   const kinds: UnitType[] = ['spear', 'archer', 'settler']
   // Two-player maps are point-symmetric: seat 1 gets the mirror image of seat 0's units (capital
@@ -35,6 +37,8 @@ export function createGame(cfg: GameConfig): GameState {
       state.units.push(newUnit(state, seat, type, tile))
     })
   })
+  // Fog of war (on unless switched off): every seat starts knowing what its capital and units see.
+  if (cfg.fog !== false) state.fog = initialFog(state)
   return state
 }
 

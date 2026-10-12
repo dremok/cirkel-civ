@@ -397,9 +397,9 @@ export class AudioEngine {
       this.voices.splice(this.voices.indexOf(old), 1)
     }
     if (this.voices.length >= MAX_VOICES) return
-    // two starts of the same sound within 30 ms only make it phasey and louder
+    // two starts of the same sound within 30 ms only make it phasey and louder; some sounds want more air
     const prev = this.lastStart.get(def.asset)
-    if (prev !== undefined && Math.abs(when - prev) < 0.03) return
+    if (prev !== undefined && Math.abs(when - prev) < (def.minGap ?? 0.03)) return
     this.lastStart.set(def.asset, when)
 
     const src = ctx.createBufferSource()

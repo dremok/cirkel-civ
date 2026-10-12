@@ -443,6 +443,42 @@
   "target": -18.0,
   "metric": "Mmax"
  },
+ "sfx/explore-1.mp3": {
+  "gain": 17.2,
+  "I": -20.3,
+  "Mmax": -17.7,
+  "TP": -8.2,
+  "LRA": 0.0,
+  "src": "explore/2",
+  "len": 1.9,
+  "bytes": 21764,
+  "target": -18.0,
+  "metric": "Mmax"
+ },
+ "sfx/explore-2.mp3": {
+  "gain": 20.2,
+  "I": -20.8,
+  "Mmax": -18.0,
+  "TP": -7.7,
+  "LRA": 0.0,
+  "src": "explore/0",
+  "len": 1.9,
+  "bytes": 20462,
+  "target": -18.0,
+  "metric": "Mmax"
+ },
+ "sfx/spotted.mp3": {
+  "gain": -6.6,
+  "I": -18.9,
+  "Mmax": -18.0,
+  "TP": -10.3,
+  "LRA": 0.0,
+  "src": "spotted/1",
+  "len": 1.622,
+  "bytes": 11122,
+  "target": -18.0,
+  "metric": "Mmax"
+ },
  "amb/amb_sea.mp3": {
   "gain": -3.2,
   "I": -23.8,

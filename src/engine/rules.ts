@@ -28,6 +28,7 @@ import { newCity, newUnit } from './game.ts'
 import { distance, hexCenter, neighbors } from './hex.ts'
 import { scores } from './observe.ts'
 import { moveCost } from './paths.ts'
+import { citySnapshot, encodeExplored, exploredOf, lineOfSight, remember, visibility } from './vision.ts'
 import { canStep } from './terrain.ts'
 import type {
   BuildItem,
@@ -37,6 +38,7 @@ import type {
   GameEvent,
   GameState,
   PlayerId,
+  PlayerMemory,
   PlayerOrders,
   ResolveResult,
   Stance,
@@ -97,6 +99,7 @@ function cloneState(s: GameState): GameState {
       build: c.build && typeof c.build === 'object' ? { ...c.build } : c.build,
       interior: { ...c.interior, plots: [...c.interior.plots] },
     })),
+    fog: s.fog && s.fog.map((m) => ({ explored: m.explored, cities: m.cities.map(citySnapshot), seen: { ...m.seen } })),
   }
 }
 
@@ -109,6 +112,10 @@ class Resolver {
   /** Tile -> index into `s.cities`, or -1. */
   readonly cityAt: Int32Array
   readonly cityDamaged = new Set<number>()
+  /** Fog of war, per seat: explored tiles (updated as the turn plays) and remembered cities. */
+  readonly fog: { explored: Uint8Array; memory: Pick<PlayerMemory, 'cities' | 'seen'> }[] | null
+  /** Per seat, lazily: tiles in sight when the turn began (orders are judged by what was known). */
+  private sightAtStart: (Uint8Array | undefined)[] = []
 
   constructor(s: GameState) {
     this.s = s
@@ -129,16 +136,41 @@ class Resolver {
     this.lives.forEach((L, i) => (this.unitAt[L.u.tile] = i))
     this.cityAt = new Int32Array(n).fill(-1)
     s.cities.forEach((c, i) => (this.cityAt[c.tile] = i))
+    this.fog = s.fog && s.fog.map((m, p) => ({ explored: exploredOf(s, p), memory: { cities: m.cities, seen: m.seen } }))
   }
 
   run(orders: Partial<Record<PlayerId, PlayerOrders>>): ResolveResult {
     this.applyOrders(orders)
-    for (let t = 1; t <= TICKS_PER_TURN; t++) this.tick(t)
+    for (let t = 1; t <= TICKS_PER_TURN; t++) {
+      this.tick(t)
+      this.discover(this.lives.filter((L) => !L.dead).map((L) => L.u))
+    }
     this.reportBlocked(TICKS_PER_TURN)
     this.volleys(TICKS_PER_TURN + 1)
     this.endOfTurn(TICKS_PER_TURN + 2)
+    this.discover(this.s.units)
+    if (this.fog) this.s.fog = this.fog.map((f) => ({ explored: encodeExplored(f.explored), ...f.memory }))
     this.s.turn++
     return { state: this.s, events: this.events }
+  }
+
+  /** Fog: what every seat sees with `units` and the cities becomes explored and remembered. */
+  private discover(units: Unit[]): void {
+    if (!this.fog) return
+    const view = { map: this.s.map, units, cities: this.s.cities, turn: this.s.turn }
+    this.fog.forEach((f, p) => (f.memory = remember(view, p, f.explored, f.memory)))
+  }
+
+  /** Fog: shooters need a line of sight to their target (without fog there is no sight to check). */
+  private sees(from: TileId, to: TileId): boolean {
+    return !this.fog || lineOfSight(this.s.map, from, to)
+  }
+
+  /** Fog: does `player` know about a rival on `tile` (in sight when the turn began)? Always without fog. */
+  private knows(player: PlayerId, tile: TileId): boolean {
+    if (!this.fog) return true
+    this.sightAtStart[player] ??= visibility(this.s, player)
+    return this.sightAtStart[player]![tile] === 1
   }
 
   // ---------------------------------------------------------------------------------------------
@@ -185,6 +217,10 @@ class Resolver {
     return { building, plot: plot! }
   }
 
+  private remembers(player: PlayerId, cityIndex: number): boolean {
+    return !this.fog || this.fog[player].memory.cities.some((m) => m.id === this.s.cities[cityIndex].id)
+  }
+
   private applyUnitOrder(L: Live, order: UnitOrder | undefined): void {
     if (!order || typeof order !== 'object') return
     const u = L.u
@@ -199,18 +235,24 @@ class Resolver {
   }
 
   /** Keep the longest valid prefix: passable neighbours; an enemy city ends the path; settlers stop
-   * before any tile held by an enemy. */
+   * before any tile held by an enemy. With fog, only what the player knows counts: a step into
+   * unexplored land is kept even if the land turns out impassable (the unit halts there), and
+   * enemies it cannot see do not cut the path. */
   private sanitizePath(L: Live, raw: unknown[]): TileId[] {
     const { map } = this.s
+    const owner = L.u.owner
+    const explored = this.fog?.[owner]?.explored
     const out: TileId[] = []
     let at = L.u.tile
     for (const step of raw) {
       if (out.length >= MAX_PATH || typeof step !== 'number' || !Number.isInteger(step)) break
-      if (step < 0 || step >= map.tiles.length || moveCost(map, at, step, L.speed) === Infinity) break
+      if (step < 0 || step >= map.tiles.length || !neighbors(map, at).includes(step)) break
+      const unknown = !!explored && (!explored[at] || !explored[step])
+      if (!unknown && moveCost(map, at, step, L.speed) === Infinity) break
       const c = this.cityAt[step]
-      const enemyCity = c >= 0 && this.s.cities[c].owner !== L.u.owner
+      const enemyCity = c >= 0 && this.s.cities[c].owner !== owner && (this.knows(owner, step) || this.remembers(owner, c))
       const occ = this.unitAt[step]
-      const enemyUnit = occ >= 0 && this.lives[occ].u.owner !== L.u.owner
+      const enemyUnit = occ >= 0 && this.lives[occ].u.owner !== owner && this.knows(owner, step)
       if (L.civilian && (enemyCity || enemyUnit)) break
       out.push(step)
       if (enemyCity) break
@@ -225,6 +267,15 @@ class Resolver {
   private tick(t: number): void {
     const { lives } = this
     for (const L of lives) if (!L.dead && !L.stopped && L.u.stance !== 'hold') L.points += L.speed
+    // A path planned into unknown land can run into water or a cliff: the unit stops there.
+    for (const L of lives) {
+      if (L.dead || L.stopped || L.u.path.length === 0) continue
+      if (moveCost(this.s.map, L.u.tile, L.u.path[0], L.speed) !== Infinity) continue
+      L.u.path = []
+      L.u.found = false
+      L.stopped = true
+      this.events.push({ t, kind: 'halt', unit: L.u.id, reason: 'blocked' })
+    }
 
     // Who is next to which enemy at the start of the tick (for cautious contact).
     const contactBefore = new Map<number, Set<number>>()
@@ -500,7 +551,7 @@ class Resolver {
     const shots: { from: Target; i?: number; target: Target; dmg: number }[] = []
     this.lives.forEach((L) => {
       if (L.dead || L.fired || L.fought || L.u.stance !== 'hold' || !UNITS[L.u.type].ranged) return
-      const reach = (tile: TileId) => inRange(this.s.map, L.u.tile, tile, unitRange(L.u))
+      const reach = (tile: TileId) => inRange(this.s.map, L.u.tile, tile, unitRange(L.u)) && this.sees(L.u.tile, tile)
       const target = this.pickUnitTarget(L.u.tile, L.u.owner, reach, L.u.target, (e) => unitRangedStrength(this.s.map, L.u, e.tile))
       if (target < 0) return
       L.fired = true
@@ -670,7 +721,7 @@ class Resolver {
       const range = unitRange(u)
       const str = (tile: TileId) => unitRangedStrength(map, u, tile)
       // Ordered target first: a unit there, or the city there.
-      if (u.target !== null && inRange(map, u.tile, u.target, range)) {
+      if (u.target !== null && inRange(map, u.tile, u.target, range) && this.sees(u.tile, u.target)) {
         const j = this.unitAt[u.target]
         if (j >= 0 && this.shootable(j, u.owner)) {
           const E = this.lives[j].u
@@ -684,7 +735,7 @@ class Resolver {
           return
         }
       }
-      const j = this.pickUnitTarget(u.tile, u.owner, (tile) => inRange(map, u.tile, tile, range), null, (e) => str(e.tile))
+      const j = this.pickUnitTarget(u.tile, u.owner, (tile) => inRange(map, u.tile, tile, range) && this.sees(u.tile, tile), null, (e) => str(e.tile))
       if (j >= 0) {
         const E = this.lives[j].u
         shots.push({ from: { unit: u.id }, i: j, target: { unit: E.id }, dmg: damage(str(E.tile), this.shotDefense(E, u.tile)) })
@@ -692,14 +743,14 @@ class Resolver {
       }
       let city: City | null = null
       for (const c of this.s.cities) {
-        if (c.owner === u.owner || c.hp <= 0 || !inRange(map, u.tile, c.tile, range)) continue
+        if (c.owner === u.owner || c.hp <= 0 || !inRange(map, u.tile, c.tile, range) || !this.sees(u.tile, c.tile)) continue
         if (!city || c.hp < city.hp) city = c
       }
       if (city) shots.push({ from: { unit: u.id }, target: { city: city.id }, dmg: damage(str(city.tile), cityDefense(map, city, u.tile)) })
     })
     for (const c of this.s.cities) {
       if (c.hp <= 0) continue
-      const j = this.pickUnitTarget(c.tile, c.owner, (tile) => cityCanShoot(map, c, tile), null, (e) => cityRangedStrength(map, c, e.tile))
+      const j = this.pickUnitTarget(c.tile, c.owner, (tile) => cityCanShoot(map, c, tile) && this.sees(c.tile, tile), null, (e) => cityRangedStrength(map, c, e.tile))
       if (j < 0) continue
       const E = this.lives[j].u
       shots.push({ from: { city: c.id }, i: j, target: { unit: E.id }, dmg: damage(cityRangedStrength(map, c, E.tile), this.shotDefense(E, c.tile)) })

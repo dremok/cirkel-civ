@@ -53,6 +53,16 @@ function v1Save(id = 'old1', extra: (state: any) => void = () => {}) {
   }
 }
 
+/** A game as the v2 server saved it, just before fog of war: no fog anywhere. */
+function v2Save(id = 'old2') {
+  const rec: any = migrate(v1Save(id)).rec
+  rec.schemaVersion = 2
+  delete rec.fog
+  delete rec.state.fog
+  delete rec.previous.fog
+  return rec
+}
+
 describe('migrate', () => {
   it('upgrades a v1 save to the current schema', () => {
     const raw = v1Save()
@@ -102,6 +112,15 @@ describe('migrate', () => {
     expect(twice.state!.cities[0].interior.plots[9]).toBe('wall')
     expect(twice.state!.cities[0].walls).toBe(true)
     expect(migrate(once).rec).toEqual(once)
+  })
+
+  it('upgrades a v2 save to a game without fog', () => {
+    const { rec, from } = migrate(v2Save())
+    expect(from).toBe(2)
+    expect(rec.schemaVersion).toBe(SCHEMA_VERSION)
+    expect(rec.fog).toBe(false)
+    expect(rec.state!.fog).toBeNull()
+    expect(rec.previous!.fog).toBeNull()
   })
 
   it('refuses saves it cannot understand', () => {
@@ -172,5 +191,30 @@ describe('loading old saves', () => {
     if (next?.type !== 'state') throw new Error('no state after resolution')
     expect(next.state.turn).toBe(3)
     expect(next.previous?.cities[0].interior).toBeDefined()
+  })
+  it('keeps a running v2 game playing without fog after the upgrade', async () => {
+    await store.loadAll()
+    await writeFile(join(dir, 'games', 'old2.json'), JSON.stringify(v2Save()))
+    await hub.load()
+    await store.flush()
+    expect(await readdir(join(dir, 'games', 'backup'))).toEqual(['old2.v2.json'])
+    const a: ServerMessage[] = []
+    const b: ServerMessage[] = []
+    const connA: Conn = hub.open((d) => a.push(JSON.parse(d)))
+    const connB: Conn = hub.open((d) => b.push(JSON.parse(d)))
+    hub.receive(connA, JSON.stringify({ type: 'resume', gameId: 'old2', token: 'tok-a' }))
+    hub.receive(connB, JSON.stringify({ type: 'resume', gameId: 'old2', token: 'tok-b' }))
+    const summary = b.filter((m) => m.type === 'summary').pop()
+    if (summary?.type !== 'summary') throw new Error('no summary')
+    expect(summary.game.fog).toBe(false)
+    hub.receive(connA, JSON.stringify({ type: 'orders', turn: 2, orders: { units: {}, cities: {} }, ready: true }))
+    hub.receive(connB, JSON.stringify({ type: 'orders', turn: 2, orders: { units: {}, cities: {} }, ready: true }))
+    const next = b.filter((m) => m.type === 'state').pop()
+    if (next?.type !== 'state') throw new Error('no state after resolution')
+    expect(next.state.turn).toBe(3)
+    expect(next.state.fog).toBeNull()
+    const full = a.filter((m) => m.type === 'state').pop()
+    if (full?.type !== 'state') throw new Error('no state for A')
+    expect(next.events).toEqual(full.events) // no fog: both players see every event
   })
 })

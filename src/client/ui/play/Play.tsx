@@ -20,6 +20,7 @@ import { friendlyName, turnsWord, unitNoun } from '../strings.ts'
 import { toast } from '../toast.tsx'
 import { openCity, setCityOpener } from './cityHook.ts'
 import { cityEconomy } from './economy.ts'
+import { fogView } from './fog.ts'
 import { ActionBar, TopBar, type Phase } from './Hud.tsx'
 import { describeTurn, type LogLine } from './log.ts'
 import { EndScreen, MenuSheet, ReplayPanel, ScoreSheet } from './Overlays.tsx'
@@ -122,6 +123,7 @@ export function Play({ session, snap }: { session: GameSession; snap: GameSnapsh
   const selUnit = sel?.kind === 'unit' ? state.units.find((u) => u.id === sel.id) ?? null : null
   const selCity = sel?.kind === 'city' ? state.cities.find((c) => c.id === sel.id) ?? null : null
   const mySelUnit = selUnit && me !== null && selUnit.owner === me ? selUnit : null
+  const fog = fogView(state, me)
 
   useEffect(() => {
     if (optimisticReady !== null && optimisticReady === serverReady) setOptimisticReady(null)
@@ -590,6 +592,7 @@ export function Play({ session, snap }: { session: GameSession; snap: GameSnapsh
       replay,
       view: viewRef.current,
       selectCity: (id: number) => setSel({ kind: 'city', id }),
+      fog,
       audio,
       tileScreen(tile: TileId) {
         const v = viewRef.current
@@ -712,13 +715,14 @@ export function Play({ session, snap }: { session: GameSession; snap: GameSnapsh
         city={selCity}
         editable={editable}
         economy={cityEconomy(state, selCity, cityFocus(draft, selCity))}
+        fog={fog}
         onBuild={setBuild}
         onEnter={() => openCity(selCity.id)}
         onClose={() => setSel(null)}
       />
     )
   } else if (sel?.kind === 'tile') {
-    panel = <TilePanel state={state} tile={sel.tile} onClose={() => setSel(null)} />
+    panel = <TilePanel state={state} tile={sel.tile} fog={fog} onClose={() => setSel(null)} />
   }
 
   const viewCity = cityView !== null ? state.cities.find((c) => c.id === cityView) ?? null : null
@@ -753,7 +757,9 @@ export function Play({ session, snap }: { session: GameSession; snap: GameSnapsh
         go(gameHash(m.gameId))
       }
     })
-    conn.send({ type: 'create', options: { name: `${name} vs bot`, seats: 2, bots: 1, mapSize: 'small', turnSeconds: null }, playerName: name })
+    // A rematch keeps this game's fog setting.
+    const fog = !!latest.current.state.fog
+    conn.send({ type: 'create', options: { name: `${name} vs bot`, seats: 2, bots: 1, mapSize: 'small', turnSeconds: null, fog }, playerName: name })
   }
 
   return (

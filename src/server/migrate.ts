@@ -7,7 +7,7 @@ import type { City, CityInterior, GameState } from '../engine/types.ts'
 import type { GameRecord, SeatRecord } from './types.ts'
 import { asBuildItem, FOCI } from './validate.ts'
 
-export const SCHEMA_VERSION = 2
+export const SCHEMA_VERSION = 3
 
 type Old = any // a parsed record of some older shape: steps check what they read
 
@@ -27,6 +27,12 @@ const STEPS: Record<number, (rec: Old) => Old> = {
     for (const o of Object.values<Old>(isObj(rec.orders) ? rec.orders : {})) {
       if (isObj(o?.cities)) for (const id of Object.keys(o.cities)) o.cities[id] = asBuildItem(o.cities[id]) ?? null
     }
+    return rec
+  },
+  // v3, 2026-10-13: fog of war. Games saved before it keep playing without fog.
+  2(rec) {
+    for (const s of [rec.state, rec.previous]) if (isObj(s)) s.fog = null satisfies GameState['fog']
+    rec.fog = false satisfies GameRecord['fog']
     return rec
   },
 }
@@ -54,7 +60,7 @@ const MAP_SIZES = new Set(['small', 'medium', 'large'])
 
 function isState(s: Old): s is GameState {
   return isObj(s) && Number.isInteger(s.turn) && isObj(s.map) && Array.isArray(s.map.tiles) &&
-    Array.isArray(s.players) && Array.isArray(s.units) && Array.isArray(s.cities)
+    Array.isArray(s.players) && Array.isArray(s.units) && Array.isArray(s.cities) && (s.fog === null || Array.isArray(s.fog))
 }
 
 /** The record with exactly the current fields (anything else is dropped), or an Error if it is unusable. */
@@ -86,6 +92,8 @@ function normalize(r: Old): GameRecord {
     host: Number.isInteger(r.host) && r.host >= 0 && r.host < seats.length ? r.host : 0,
     seats,
     turnSeconds: typeof r.turnSeconds === 'number' && r.turnSeconds > 0 ? r.turnSeconds : null,
+    // A started game has fog exactly when its state carries memories.
+    fog: started ? r.state.fog !== null : r.fog === true,
     mapSize: MAP_SIZES.has(r.mapSize) ? r.mapSize : null,
     seed: typeof r.seed === 'string' ? r.seed : null,
     config: started ? r.config : null,

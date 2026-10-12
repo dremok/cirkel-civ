@@ -97,6 +97,17 @@ export interface City {
   interior: CityInterior
 }
 
+/** Fog of war (SPEC.md §7b): what one player has seen. */
+export interface PlayerMemory {
+  /** One character per tile (indexed by TileId): '1' = explored (seen at least once), '0' = never seen. */
+  explored: string
+  /** Rival cities as this player last saw them (observe-filtered snapshots). While a city is in
+   * sight the live city replaces its snapshot; a remembered city stays as it was until seen again. */
+  cities: City[]
+  /** The turn each remembered city (by id) was last seen. */
+  seen: Record<CityId, number>
+}
+
 export interface Player {
   id: PlayerId
   name: string
@@ -110,6 +121,8 @@ export interface GameConfig {
   players: { name: string; kind: 'human' | 'bot' }[] // 2..4
   mapSize?: 'small' | 'medium' | 'large'
   maxTurns?: number
+  /** Fog of war (default true). */
+  fog?: boolean
 }
 
 export interface GameState {
@@ -121,6 +134,9 @@ export interface GameState {
   cities: City[]
   nextId: number // shared id counter for units and cities
   winner: PlayerId | 'draw' | null
+  /** Fog of war: one memory per seat, or null when the game has no fog (everything visible).
+   * In observe(state, p) only seat p's memory is filled; the others are blanked. */
+  fog: PlayerMemory[] | null
 }
 
 /** What a player wants a unit to do. Units without an entry keep their persistent orders. */
@@ -166,6 +182,13 @@ export type GameEvent =
   | { t: Tick; kind: 'heal'; unit: UnitId; hp: number }
   /** A city that was not under siege this turn repaired itself (new hp). */
   | { t: Tick; kind: 'cityRepair'; city: CityId; hp: number }
+  // The next three exist only in a per-player stream from observeEvents(), never in resolveTurn's output.
+  /** Fog: an enemy unit came into sight (as observe would show it). Emitted before the first event that involves it. */
+  | { t: Tick; kind: 'spotted'; unit: Unit }
+  /** Fog: an enemy unit went out of sight at `tile`. It is not in the next observed state unless spotted again. */
+  | { t: Tick; kind: 'lost'; unit: UnitId; tile: TileId }
+  /** Fog: tiles this player saw for the first time during this tick. */
+  | { t: Tick; kind: 'explore'; tiles: TileId[] }
   | { t: Tick; kind: 'eliminated'; player: PlayerId }
   | { t: Tick; kind: 'victory'; winner: PlayerId | 'draw' }
 

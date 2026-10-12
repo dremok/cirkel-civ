@@ -1,5 +1,7 @@
-import { lazy, Suspense, useEffect, useState, useSyncExternalStore } from 'react'
-import { GameSession } from '../net/session.ts'
+import { lazy, Suspense, useEffect, useState, useSyncExternalStore, type CSSProperties } from 'react'
+import { GameSession, type GameSnapshot } from '../net/session.ts'
+import { PLAYERS } from '../render/palette.ts'
+import { Icon } from './icons.tsx'
 import { clearAutostart, isAutostart } from '../net/storage.ts'
 import { Lobby } from './Lobby.tsx'
 
@@ -35,6 +37,7 @@ function GameScreen({ session }: { session: GameSession }) {
       </div>
     )
   }
+  if (snap.fogHidden && snap.summary && !snap.view) return <FogHidden snap={snap} />
   // A game against bots starts the moment it is created: show the loader, not the lobby.
   const autostart = isAutostart(session.gameId)
   if (started) {
@@ -58,6 +61,32 @@ function Waiting({ text }: { text: string }) {
         <span />
       </span>
       <p className="muted">{text}</p>
+    </div>
+  )
+}
+
+/** A fog-of-war game cannot be watched while it runs: show who is playing and how far it is. */
+function FogHidden({ snap }: { snap: GameSnapshot }) {
+  const g = snap.summary!
+  const players = g.seats.filter((s) => s.kind !== 'open')
+  return (
+    <div className="center-screen fog-hidden">
+      <span className="fog-hidden-icon" aria-hidden="true">
+        <Icon name="cloud" size={30} />
+      </span>
+      <span className="label">Turn {g.turn}</span>
+      <h1 className="serif">{g.name}</h1>
+      <p className="muted">This game has fog of war, so it stays hidden while it is played. You can watch the whole game when it ends.</p>
+      <ul className="fog-hidden-seats">
+        {players.map((s) => (
+          <li key={s.seat}>
+            <span className="swatch" style={{ '--c': PLAYERS[s.seat]?.base } as CSSProperties} />
+            {s.name ?? 'Bot'}
+            {s.ready && <Icon name="check" size={14} />}
+          </li>
+        ))}
+      </ul>
+      <a className="btn btn-ghost" href="#/">Home</a>
     </div>
   )
 }

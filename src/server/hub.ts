@@ -1,7 +1,7 @@
 // Rooms and the turn cycle. Transport-agnostic: a Conn is anything that can receive a JSON string,
 // so this file knows nothing about sockets. The server is authoritative: clients only send orders.
 import { createHash, randomBytes, randomInt } from 'node:crypto'
-import { botOrders, createGame, hashString, observe, resolveTurn } from '../engine/index.ts'
+import { botOrders, createGame, hashString, observe, observeEvents, resolveTurn } from '../engine/index.ts'
 import type { GameConfig, GameState, PlayerId, PlayerOrders, ResolveResult } from '../engine/types.ts'
 import type { ClientMessage, CreateOptions, ErrorCode, GameSummary, ServerMessage } from '../shared/protocol.ts'
 import { SCHEMA_VERSION } from './migrate.ts'
@@ -36,6 +36,7 @@ function refuse(code: ErrorCode, message: string): never {
 const ID_ALPHABET = 'abcdefghjkmnpqrstuvwxyz23456789'
 const MAX_TIMEOUT = 2 ** 31 - 1
 const LIST_LIMIT = 50
+const FOG_HIDDEN = 'This game has fog of war. You can watch it when it ends.'
 
 const hashToken = (token: string) => createHash('sha256').update(token).digest('hex')
 const botSeat = (i: number): SeatRecord => ({ kind: 'bot', name: `Bot ${i + 1}`, tokenHash: null })
@@ -150,7 +151,7 @@ export class Hub {
     )
     const rec: GameRecord = {
       schemaVersion: SCHEMA_VERSION, id, name: o.name || defaultName(playerName), phase: 'lobby', createdAt: now, updatedAt: now, host: 0, seats,
-      turnSeconds: o.turnSeconds ?? null, mapSize: o.mapSize ?? null, seed: o.seed ?? null,
+      turnSeconds: o.turnSeconds ?? null, fog: o.fog ?? true, mapSize: o.mapSize ?? null, seed: o.seed ?? null,
       config: null, state: null, previous: null, events: [], orders: {}, ready: seats.map(() => false), deadline: null, log: [],
     }
     const room = new Room(rec)
@@ -159,7 +160,7 @@ export class Hub {
     this.bind(conn, room, 0)
     this.send(conn, { type: 'joined', gameId: id, seat: 0, token, host: true })
     this.broadcastSummary(room)
-    console.log(`[${id}] created by ${playerName}: ${o.seats} seats, ${o.bots} bots, timer ${rec.turnSeconds ?? 'none'}`)
+    console.log(`[${id}] created by ${playerName}: ${o.seats} seats, ${o.bots} bots, timer ${rec.turnSeconds ?? 'none'}, fog ${rec.fog ? 'on' : 'off'}`)
   }
 
   private join(conn: Conn, gameId: string, playerName: string) {
@@ -193,7 +194,9 @@ export class Hub {
     const room = this.room(gameId)
     this.bind(conn, room, null)
     this.send(conn, { type: 'summary', game: this.summaryOf(room) })
-    if (room.rec.state) this.sendState(conn)
+    if (!room.rec.state) return
+    if (this.blindsSpectators(room.rec)) return this.error(conn, 'fog_hidden', FOG_HIDDEN)
+    this.sendState(conn)
   }
 
   private setSeat(conn: Conn, seat: PlayerId, kind: 'bot' | 'open') {
@@ -227,6 +230,7 @@ export class Hub {
       seed: rec.seed ?? randomBytes(6).toString('base64url'),
       players: seats.map((s) => ({ name: s.name ?? '?', kind: s.kind === 'human' ? 'human' : 'bot' })),
       ...(rec.mapSize ? { mapSize: rec.mapSize } : {}),
+      fog: rec.fog,
     }
     let state: GameState
     try {
@@ -244,6 +248,7 @@ export class Hub {
     this.arm(room)
     this.broadcastSummary(room)
     this.broadcastState(room)
+    if (this.blindsSpectators(rec)) for (const c of room.conns) if (c.seat === null) this.error(c, 'fog_hidden', FOG_HIDDEN)
     console.log(`[${rec.id}] started: seed ${config.seed}, ${state.map.width}x${state.map.height}`)
   }
 
@@ -464,10 +469,14 @@ export class Hub {
       createdAt: rec.createdAt,
       updatedAt: rec.updatedAt,
       turnSeconds: rec.turnSeconds,
+      fog: rec.fog,
     }
   }
 
-  /** The game as `seat` may see it. Spectators, the eliminated and everyone after the end see it all. */
+  /**
+   * The game as `seat` may see it: observe() of the states and, from the full previous state, that
+   * player's own event stream. Spectators, the eliminated and everyone after the end see it all.
+   */
   private stateFor(rec: GameRecord, seat: PlayerId | null): ServerMessage {
     const state = rec.state!
     const all = seat === null || rec.phase === 'finished' || !state.players[seat]?.alive
@@ -478,19 +487,29 @@ export class Hub {
       you: seat,
       state: view(state),
       previous: rec.previous && view(rec.previous),
-      events: rec.events,
+      events: all || !rec.previous ? rec.events : observeEvents(rec.previous, rec.events, seat),
       myOrders: seat === null ? null : (rec.orders[seat] ?? null),
       deadline: rec.deadline,
     }
   }
 
+  /** A running fog-of-war game shows spectators only its summary: a full view would let a player
+   * watch their own game and see the whole map. Seated players, eliminated ones too, are not spectators. */
+  private blindsSpectators(rec: GameRecord): boolean {
+    return rec.fog && rec.phase === 'planning'
+  }
+
   private sendState(conn: Conn) {
-    if (conn.room?.rec.state) this.send(conn, this.stateFor(conn.room.rec, conn.seat))
+    const rec = conn.room?.rec
+    if (!rec?.state || (conn.seat === null && this.blindsSpectators(rec))) return
+    this.send(conn, this.stateFor(rec, conn.seat))
   }
 
   private broadcastState(room: Room) {
     const cache = new Map<PlayerId | null, string>()
+    const blind = this.blindsSpectators(room.rec)
     for (const c of room.conns) {
+      if (c.seat === null && blind) continue
       let data = cache.get(c.seat)
       if (data === undefined) cache.set(c.seat, (data = JSON.stringify(this.stateFor(room.rec, c.seat))))
       c.send(data)

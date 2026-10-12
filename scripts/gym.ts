@@ -12,7 +12,7 @@
 //   {"cmd":"close"}
 // reset config: seed (string), players (2..4), agents (seats you control, default [0]),
 //   opponent ("bot" | "random" | "idle", default "bot"), mapSize ("small" | "medium" | "large"),
-//   maxTurns (default 60), obs ("state" | "grid" | "both", default "state").
+//   maxTurns (default 60), fog (default true), obs ("state" | "grid" | "both", default "state").
 // Responses: {"id", "ok": true, ...} or {"id", "ok": false, "error"}. reset and step answer with
 //   turn, done, winner, scores and observations (one per agent seat); step also returns the turn's
 //   events. The static map is sent once, in the reset response. See examples/README.md.
@@ -25,6 +25,7 @@ import { observe, scores } from '../src/engine/observe.ts'
 import { findPath, reachablePaths } from '../src/engine/paths.ts'
 import { hashString } from '../src/engine/rng.ts'
 import { resolveTurn } from '../src/engine/rules.ts'
+import { exploredOf, visibility } from '../src/engine/vision.ts'
 import type { Biome, GameState, PlayerId, PlayerOrders, Stance, UnitType } from '../src/engine/types.ts'
 
 type Policy = (s: GameState, p: PlayerId, seed: number) => PlayerOrders
@@ -44,8 +45,8 @@ interface Session {
   seed: number
 }
 
-/** Feature planes, row-major (index = tile id), -1 = none. */
-function grid(s: GameState) {
+/** Feature planes, row-major (index = tile id), -1 = none; `visible` and `explored` are 1/0 for `seat`. */
+function grid(s: GameState, seat: PlayerId) {
   const n = s.map.tiles.length
   const plane = () => new Array<number>(n).fill(-1)
   const g = {
@@ -64,7 +65,7 @@ function grid(s: GameState) {
     g.cityHp[c.tile] = c.hp
     g.cityWalls[c.tile] = c.walls ? 1 : 0
   }
-  return g
+  return { ...g, visible: [...visibility(s, seat)], explored: [...exploredOf(s, seat)] }
 }
 
 /** One game behind the protocol. The CLI below wraps it in stdio; tests use it directly. */
@@ -115,6 +116,7 @@ export class Gym {
       players: Array.from({ length: seats }, (_, i) => (agents.includes(i) ? { name: `agent${i}`, kind: 'human' } : { name: `bot${i}`, kind: 'bot' })),
       mapSize: cfg.mapSize as 'small' | 'medium' | 'large' | undefined,
       maxTurns: cfg.maxTurns === undefined ? undefined : Number(cfg.maxTurns),
+      fog: cfg.fog === undefined ? undefined : cfg.fog !== false,
     })
     this.session = { state, agents, opponent, obs, seed: hashString(seed) }
     const { map } = state
@@ -150,10 +152,11 @@ export class Gym {
     const s = this.need()
     const observations: Record<number, Message> = {}
     for (const seat of s.agents) {
-      const { map, ...rest } = observe(s.state, seat)
+      const view = observe(s.state, seat)
+      const { map, ...rest } = view
       const o: Message = {}
       if (s.obs !== 'grid') o.state = withMap ? { map, ...rest } : rest
-      if (s.obs !== 'state') o.grid = grid(s.state)
+      if (s.obs !== 'state') o.grid = grid(view, seat)
       observations[seat] = o
     }
     return { turn: s.state.turn, done: s.state.winner !== null, winner: s.state.winner, scores: scores(s.state), observations }

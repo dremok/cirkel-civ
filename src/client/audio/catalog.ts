@@ -11,7 +11,7 @@ export type UiSound = 'tap' | 'select' | 'order' | 'cancel' | 'confirm' | 'turn'
 
 export type SfxSound =
   | 'march' | 'hooves' | 'clash' | 'hit' | 'volley' | 'thuds' | 'fall' | 'cityHit' | 'capture' | 'halt'
-  | 'muster' | 'found' | 'built' | 'grow' | 'fail'
+  | 'muster' | 'found' | 'built' | 'grow' | 'fail' | 'explore' | 'spotted'
 
 export type MusicTrack = 'planning' | 'battle' | 'city'
 /** 'game' picks planning or battle music by itself, from how much fighting the recent turns had. */
@@ -30,6 +30,8 @@ export interface SoundDef {
   /** Most simultaneous voices of this sound; more are dropped (or the oldest is cut, if `steal`). */
   voices: number
   steal?: boolean
+  /** Fewest seconds between two starts of this sound (default 0.03), across replays. */
+  minGap?: number
   /** Duck music and ambience while it plays: depth (0..1 of the level kept) and hold seconds. */
   duck?: { depth: number; hold: number }
 }
@@ -62,6 +64,9 @@ export const SFX: Record<SfxSound, SoundDef> = {
   built: { asset: 'built', gain: 0.9, cents: 40, voices: 2 },
   grow: { asset: 'grow', gain: 0.47, cents: 60, voices: 2 },
   fail: { asset: 'fail', gain: 0.32, cents: 40, voices: 1 },
+  // Fog of war: clouds parting is a breath under everything, a sighted enemy a distant call.
+  explore: { asset: 'explore', gain: 0.32, cents: 150, voices: 1, minGap: 2 },
+  spotted: { asset: 'spotted', gain: 0.42, cents: 60, voices: 1, minGap: 1.5, duck: { depth: 0.75, hold: 0.9 } },
 }
 
 export interface TrackDef {

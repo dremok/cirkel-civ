@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import WebSocket from 'ws'
-import { botOrders } from '../../src/engine/index.ts'
+import { botOrders, observe } from '../../src/engine/index.ts'
 import type { ClientMessage, ServerMessage } from '../../src/shared/protocol.ts'
 import { SCHEMA_VERSION } from '../../src/server/migrate.ts'
 import type { GameRecord } from '../../src/server/types.ts'
@@ -188,7 +188,8 @@ describe('server flow', () => {
     guest.send({ type: 'list' })
     expect((await guest.next('games')).games).toEqual([])
 
-    host.send({ type: 'create', options: { name: 'Testspel', seats: 3, bots: 1 }, playerName: 'Anna' })
+    // Fog off: this game is watched live (fog games hide from spectators, see fog.test.ts).
+    host.send({ type: 'create', options: { name: 'Testspel', seats: 3, bots: 1, fog: false }, playerName: 'Anna' })
     const joined = await host.next('joined')
     expect(joined).toMatchObject({ seat: 0, host: true })
     gameId = joined.gameId
@@ -256,7 +257,9 @@ describe('server flow', () => {
     expect(ws.you).toBeNull()
     expect(ws.myOrders).toBeNull()
 
-    let state = ws.state
+    // Each player plans from their own view (fog is on by default).
+    let state = observe(ws.state, 0)
+    let guestState = observe(ws.state, 1)
     for (let turn = 1; turn <= 5; turn++) {
       expect(state.turn).toBe(turn)
       for (const c of [host, guest, watcher]) c.drain()
@@ -285,7 +288,7 @@ describe('server flow', () => {
         await guest.next('joined')
       }
 
-      guest.send({ type: 'orders', turn, orders: botOrders(state, 1, turn), ready: true })
+      guest.send({ type: 'orders', turn, orders: botOrders(guestState, 1, turn), ready: true })
       const [hs, gs, vs] = await Promise.all([host.next('state'), guest.next('state'), watcher.next('state')])
       for (const s of [hs, gs, vs]) {
         expect(s.state.turn).toBe(turn + 1)
@@ -297,6 +300,7 @@ describe('server flow', () => {
       const after = (await host.next('summary', (m) => m.game.turn === turn + 1)).game
       expect(after.seats.map((s) => s.ready)).toEqual([false, false, true])
       state = hs.state
+      guestState = gs.state
       if (state.winner !== null) break
     }
     turnBeforeRestart = state.turn
@@ -369,7 +373,7 @@ describe('server flow', () => {
     const stale: GameRecord = {
       schemaVersion: SCHEMA_VERSION, id: 'stale1', name: 'Gammal', phase: 'lobby', createdAt: old, updatedAt: old, host: 0,
       seats: [{ kind: 'human', name: 'X', tokenHash: null }, { kind: 'open', name: null, tokenHash: null }],
-      turnSeconds: null, mapSize: null, seed: null, config: null, state: null, previous: null, events: [],
+      turnSeconds: null, fog: false, mapSize: null, seed: null, config: null, state: null, previous: null, events: [],
       orders: {}, ready: [false, false], deadline: null, log: [],
     }
     await writeFile(join(dataDir, 'games', 'stale1.json'), JSON.stringify(stale))

@@ -10,6 +10,7 @@ const TEXT: Record<ErrorCode, string | null> = {
   stale_turn: null, // a fresh state follows
   kicked: 'The host gave your seat away. You are watching now.',
   internal: 'Something went wrong on the server. Your orders are kept; press Ready again.',
+  fog_hidden: null, // shown as its own screen (a fog game cannot be watched while it runs)
 }
 
 /** The text to show for a server error, or null when nothing should be shown. */

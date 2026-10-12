@@ -22,6 +22,7 @@ export interface GameSummary {
   createdAt: number
   updatedAt: number
   turnSeconds: number | null // null = no turn timer
+  fog: boolean
 }
 
 export interface CreateOptions {
@@ -31,6 +32,8 @@ export interface CreateOptions {
   mapSize?: 'small' | 'medium' | 'large'
   turnSeconds?: number | null
   seed?: string
+  /** Fog of war (default true). */
+  fog?: boolean
 }
 
 export type ClientMessage =
@@ -83,3 +86,6 @@ export type ErrorCode =
   | 'stale_turn' // orders for another turn; a fresh 'state' follows
   | 'kicked' // the host removed you from your seat; you are a spectator now (forget the token)
   | 'internal' // server or engine failure
+  /** watch: a running fog-of-war game shows spectators only its 'summary' (a full view would reveal
+   * the whole map to its players). The full 'state' arrives when the game ends. */
+  | 'fog_hidden'

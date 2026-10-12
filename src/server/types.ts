@@ -20,6 +20,8 @@ export interface GameRecord {
   host: PlayerId
   seats: SeatRecord[]
   turnSeconds: number | null
+  /** Fog of war, chosen at create (games saved before fog existed have none). */
+  fog: boolean
   mapSize: CreateOptions['mapSize'] | null
   /** Seed asked for at create; the seed actually used is config.seed. */
   seed: string | null

@@ -64,6 +64,7 @@ export function Lobby({ session, snap }: { session: GameSession; snap: GameSnaps
         <h1 className="serif">{g.name}</h1>
         <p className="muted">
           {openSeats === 0 ? 'All seats are taken.' : openSeats === 1 ? 'One seat is open.' : `${openSeats} seats are open.`} {timerText(g.turnSeconds)}.
+          {g.fog ? ' Fog of war: the map is discovered as you go.' : ' No fog: the whole map is visible.'}
         </p>
       </header>
 

@@ -63,7 +63,7 @@ group<AmbienceKind>($('amb'), ['world', 'sea', 'meadow', 'town', null], (v) => a
 for (const name of ['tap', 'select', 'order', 'cancel', 'confirm', 'turn', 'tick', 'notify', 'page'] as UiSound[]) button($('ui'), name, () => audio.ui(name))
 const pan = $('pan') as HTMLInputElement
 pan.addEventListener('input', () => { $('panv').textContent = pan.value })
-const sfxNames: SfxSound[] = ['march', 'hooves', 'clash', 'hit', 'volley', 'thuds', 'fall', 'cityHit', 'capture', 'halt', 'muster', 'found', 'built', 'grow', 'fail']
+const sfxNames: SfxSound[] = ['march', 'hooves', 'clash', 'hit', 'volley', 'thuds', 'fall', 'cityHit', 'capture', 'halt', 'muster', 'found', 'built', 'grow', 'fail', 'explore', 'spotted']
 for (const name of sfxNames) button($('sfx'), name, () => audio.sfx(name, { pan: Number(pan.value) }))
 
 // --- fake replays on a 10-column board: tile = row * 10 + col, pan follows the column
@@ -143,6 +143,23 @@ function economy() {
   return { ev, prev: state([settler], [c]) }
 }
 
+function scouting() {
+  // a rider rides into the fog: a tile or two revealed per tick, an enemy spotted and lost again,
+  // then a new city at the end of the turn reveals a wide circle
+  const rider = unit(0, 'rider', tile(1, 5))
+  const enemy = unit(1, 'spear', tile(7, 4))
+  const ev: GameEvent[] = []
+  for (let t = 1; t <= 6; t++) {
+    ev.push({ t, kind: 'move', unit: rider.id, from: tile(t, 5), to: tile(t + 1, 5) })
+    ev.push({ t, kind: 'explore', tiles: Array.from({ length: 1 + (t % 3) }, (_, i) => tile(t + 2, 3 + i)) })
+  }
+  ev.push({ t: 3, kind: 'spotted', unit: enemy })
+  ev.push({ t: 4, kind: 'move', unit: enemy.id, from: tile(7, 4), to: tile(8, 4) })
+  ev.push({ t: 6, kind: 'lost', unit: enemy.id, tile: tile(9, 4) })
+  ev.push({ t: 8, kind: 'explore', tiles: Array.from({ length: 14 }, (_, i) => tile(i % W, 8 + (i % 2))) })
+  return { ev, prev: state([rider]) }
+}
+
 function ending(won: boolean) {
   const { ev, prev } = skirmish()
   ev.push({ t: 8, kind: 'victory', winner: won ? 0 : 1 })
@@ -173,6 +190,7 @@ button($('replays'), 'Skirmish', () => run(skirmish))
 button($('replays'), 'Big march (16 units)', () => run(bigMarch))
 button($('replays'), 'Siege and capture', () => run(siege))
 button($('replays'), 'Economy turn', () => run(economy))
+button($('replays'), 'Scouting (fog)', () => run(scouting))
 button($('replays'), 'Victory', () => run(() => ending(true)))
 button($('replays'), 'Defeat', () => run(() => ending(false)))
 button($('replays'), 'Stop', () => current?.stop())

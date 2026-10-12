@@ -37,6 +37,8 @@ export const ASSETS = {
   built: { bus: 'sfx', files: ['sfx/built.mp3'], dur: 1.247 },
   grow: { bus: 'sfx', files: ['sfx/grow.mp3'], dur: 1.8 },
   fail: { bus: 'sfx', files: ['sfx/fail.mp3'], dur: 0.45 },
+  explore: { bus: 'sfx', files: ['sfx/explore-1.mp3', 'sfx/explore-2.mp3'], dur: 1.9 },
+  spotted: { bus: 'sfx', files: ['sfx/spotted.mp3'], dur: 1.622 },
   amb_sea: { bus: 'amb', files: ['amb/amb_sea.mp3'], dur: 28.0, loop: [0.25, 28.25] },
   amb_meadow: { bus: 'amb', files: ['amb/amb_meadow.mp3'], dur: 28.0, loop: [0.25, 28.25] },
   amb_town: { bus: 'amb', files: ['amb/amb_town.mp3'], dur: 28.0, loop: [0.25, 28.25] },

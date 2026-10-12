@@ -61,6 +61,8 @@ await click('Siege and capture')
 await page.waitForTimeout(4500)
 await click('Economy turn')
 await page.waitForTimeout(3000)
+await click('Scouting (fog)')
+await page.waitForTimeout(4500)
 const state = await page.evaluate(() => {
   const a = window.audio
   return {

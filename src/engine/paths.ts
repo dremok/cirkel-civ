@@ -3,12 +3,13 @@
 // (capped at speed x 6, so any passable neighbour takes at most one turn), at most one step
 // per tick, and leftover points are lost at the end of the turn.
 
-import { TICKS_PER_TURN, UNITS } from './config.ts'
+import { FLAT_COST, TICKS_PER_TURN, UNITS } from './config.ts'
 import { neighbors } from './hex.ts'
 import { stepCost } from './terrain.ts'
-import type { GameMap, GameState, TileId, Unit, UnitId } from './types.ts'
+import { exploredOf } from './vision.ts'
+import type { GameMap, GameState, PlayerId, TileId, Unit, UnitId } from './types.ts'
 
-interface Edges {
+export interface Edges {
   /** nb[i * 6 + k]: k-th neighbour of tile i, or -1. */
   nb: Int32Array
   /** Raw step cost of each edge (Infinity if impassable or a cliff). */
@@ -39,9 +40,29 @@ export function edges(map: GameMap): Edges {
   return e
 }
 
+/**
+ * The map's edges as `player` knows them. With fog of war, every step into or out of a tile the
+ * player has not explored costs a flat step, as if that land were open grass: plans never reveal
+ * what lies under the clouds (resolution still uses the real map). Without fog: the real edges.
+ */
+export function knownEdges(state: GameState, player: PlayerId): Edges {
+  const real = edges(state.map)
+  if (!state.fog) return real
+  const explored = exploredOf(state, player)
+  const cost = Float64Array.from(real.cost)
+  const back = Float64Array.from(real.back)
+  for (let i = 0; i < explored.length; i++) {
+    for (let k = i * 6; k < i * 6 + 6; k++) {
+      const j = real.nb[k]
+      if (j >= 0 && (!explored[i] || !explored[j])) cost[k] = back[k] = FLAT_COST
+    }
+  }
+  return { nb: real.nb, cost, back }
+}
+
 /** Points a unit of `speed` needs to step from `from` into the neighbouring `to`; Infinity if it cannot. */
-export function moveCost(map: GameMap, from: TileId, to: TileId, speed: number): number {
-  const { nb, cost } = edges(map)
+export function moveCost(map: GameMap, from: TileId, to: TileId, speed: number, known: Edges = edges(map)): number {
+  const { nb, cost } = known
   for (let k = from * 6, end = k + 6; k < end; k++) {
     if (nb[k] === to) return cost[k] === Infinity ? Infinity : Math.min(cost[k], speed * TICKS_PER_TURN)
   }
@@ -82,7 +103,7 @@ export function pathField(
   map: GameMap,
   from: TileId,
   speed: number,
-  opts: { through?: Uint8Array; enter?: Uint8Array; maxTurns?: number } = {},
+  opts: { through?: Uint8Array; enter?: Uint8Array; maxTurns?: number; edges?: Edges } = {},
 ): PathField {
   const n = map.tiles.length
   const budget = speed * TICKS_PER_TURN
@@ -91,7 +112,7 @@ export function pathField(
   const ticks = new Float64Array(n).fill(Infinity)
   const prev = new Int32Array(n).fill(-1)
   const done = new Uint8Array(n)
-  const { nb, cost } = edges(map)
+  const { nb, cost } = opts.edges ?? edges(map)
   const maxKey = (opts.maxTurns ?? Infinity) * K
   const heap = new MinHeap()
   const reached: TileId[] = []
@@ -138,29 +159,30 @@ function unitById(state: GameState, id: UnitId): Unit | undefined {
 
 /** Fastest path for a unit to `dest` (excluding the start tile), ignoring other units except that
  * `dest` may hold an enemy unit or city (an attack; never for settlers). Enemy cities cannot be
- * passed through. Null if unreachable. */
+ * passed through. With fog, unexplored land counts as open grass (see knownEdges). Null if unreachable. */
 export function findPath(state: GameState, unit: UnitId, dest: TileId): TileId[] | null {
   const u = unitById(state, unit)
   if (!u || !Number.isInteger(dest) || dest < 0 || dest >= state.map.tiles.length) return null
   const { through, enter } = hostileTiles(state, u)
   if (enter[dest]) return null
-  return extractPath(pathField(state.map, u.tile, UNITS[u.type].speed, { through, enter }), dest)
+  return extractPath(pathField(state.map, u.tile, UNITS[u.type].speed, { through, enter, edges: knownEdges(state, u.owner) }), dest)
 }
 
 /** Unobstructed timing of a path from the unit's tile: turn offset (0 = this turn) and tick (1..6) of
  * each step. Stops at the first step that is not a passable neighbour. Matches resolveTurn when
- * nothing gets in the way. */
+ * nothing gets in the way (with fog: as far as the owner knows the land). */
 export function pathTiming(state: GameState, unit: UnitId, path: TileId[]): { turn: number; tick: number }[] {
   const u = unitById(state, unit)
   if (!u) return []
   const speed = UNITS[u.type].speed
+  const known = knownEdges(state, u.owner)
   const out: { turn: number; tick: number }[] = []
   let at = u.tile
   let turn = 0
   let tick = 0
   let points = 0
   for (const next of path) {
-    const cost = moveCost(state.map, at, next, speed)
+    const cost = moveCost(state.map, at, next, speed, known)
     if (cost === Infinity) break
     for (;;) {
       tick++
@@ -189,7 +211,7 @@ export function reachablePaths(state: GameState, unit: UnitId): Record<TileId, T
   const u = unitById(state, unit)
   if (!u) return {}
   const { through, enter } = hostileTiles(state, u)
-  const f = pathField(state.map, u.tile, UNITS[u.type].speed, { through, enter, maxTurns: 1 })
+  const f = pathField(state.map, u.tile, UNITS[u.type].speed, { through, enter, maxTurns: 1, edges: knownEdges(state, u.owner) })
   const out: Record<TileId, TileId[]> = {}
   for (const t of [...f.reached].sort((a, b) => a - b)) if (t !== u.tile) out[t] = extractPath(f, t)!
   return out

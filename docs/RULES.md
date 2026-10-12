@@ -103,7 +103,7 @@ Every unit that is ready picks its step for this tick. **Ready** means its point
 At the end of every tick, an Archer on **Hold** that has neither fired nor fought this turn shoots if
 an enemy unit is in range: its ordered target if that tile holds one, otherwise the weakest in range
 (fewest hp, then most damage, then lowest id). It fires once per turn; if nothing came into range it
-volleys at tick 7 like everyone else.
+volleys at tick 7 like everyone else. With fog of war it only fires at what it has a line of sight to.
 
 ### 4.6 Contact
 
@@ -121,7 +121,8 @@ All at once, from the state after tick 6:
   in range; otherwise the enemy city in range with the least hp.
 - Every **city** with hp > 0 shoots the weakest enemy unit in its range.
 - **Range:** 2 for Archers and cities, +1 when the shooter stands 2 or more levels above the target,
-  and for cities +1 on a side with a Tower.
+  and for cities +1 on a side with a Tower. With fog of war the shooter also needs a line of sight to
+  the target (section 10).
 - **Garrisons are safe from arrows** while their city has hp: shots at a city tile hit the city. Once
   the city is at 0 hp (breached), its garrison can be shot.
 
@@ -219,11 +220,42 @@ or shoot. Maps for three or four players cannot be symmetric: the generator pick
 best for the worst-off seat (share of the land plus site quality, at least 6 apart) and then shuffles
 the seats.
 
-## 10. What players see
+## 10. Fog of war
 
-`observe(state, player)` shows the whole board (no fog yet) but hides other players' plans: their
-units' paths, founding flags and volley targets, and their cities' construction and stores. Stances,
-buildings and city focus are visible.
+Games have fog of war unless they are created without it (`GameConfig.fog: false`).
+
+- **Sight.** Every unit sees 2 tiles and every city 3; standing on hills adds 1. Neighbouring tiles
+  are always seen.
+- **Height blocks sight.** For a tile 2 or more away, take the hex line between the two tile
+  centres. A tile on it blocks if it stands higher (its height, +1 for forest; mountains and snow by
+  their height) than both ends. When the line runs exactly along the edge between two tiles, both
+  slightly nudged lines are tried and either clear one is enough, so sight is the same in both
+  directions and on a mirrored map. You can see a peak behind a forest, not the valley behind a ridge.
+- **Explored** is every tile ever seen. It grows after every tick (a Rider reveals the land it rides
+  past) and after the end of the turn (new cities, new units).
+- **What a player sees** (`observe`): its own units and cities; enemy units on tiles in sight now;
+  rival cities live while their tile is in sight, otherwise as last seen (with the turn it was seen).
+  A remembered city is forgotten when its tile is seen again and it is gone or now the player's own.
+  Other players' memories are blanked, and plans stay hidden as always.
+- **Replay** (`observeEvents`): a player's stream holds the events with a tile in its sight in that
+  tick, or with its own unit or city (so an attacker that hits you is revealed for that moment), plus
+  `spotted` when an enemy unit comes into sight, `lost` when it leaves, and `explore` with each
+  tick's newly seen tiles. A rival's failed construction stays hidden.
+- **Planning into the unknown.** Paths through unexplored land are planned as if it were open grass,
+  so plans never reveal what lies under the clouds. Orders keep such steps; the turn plays on the real
+  map, and a unit whose next step turns out to be water or a cliff halts (`blocked`) and drops its
+  path. A Settler's path is only cut before enemies its player can see.
+- **Shooting needs a line of sight.** An Archer (volley or overwatch) or a city may only shoot a unit
+  or city it has a line of sight to from its own tile, by the rule above; range is unchanged. High
+  ground and hills are what let you shoot over a forest; nobody shoots through a ridge. Being shot
+  still reveals the shooter, which may stand beyond your own sight. (Without fog there is no sight,
+  and shooting needs range only.)
+- **The land is not secret.** Every player's view carries the whole static map (it follows from the
+  seed anyway); the client simply does not show unexplored land. Units, cities and plans are what the
+  server filters.
+
+Without fog, `observe` shows the whole board and only hides other players' plans (their units'
+paths, founding flags and volley targets, their cities' construction and stores).
 
 ## 11. Events (for replay)
 
@@ -243,6 +275,7 @@ buildings and city focus are visible.
 | `heal` | 8 | a unit healed (new hp) |
 | `cityRepair` | 8 | a city repaired itself (new hp) |
 | `eliminated`, `victory` | 8 | end of a player, end of the game |
+| `spotted`, `lost`, `explore` | any | fog of war, only in a player's stream from `observeEvents` |
 
 Within a tick, events are in the order things happen: clashes, moves, melee, engaged halts, deaths,
 advances and captures, overwatch shots and their deaths, contact halts.

@@ -93,7 +93,7 @@ export function Home() {
       setName(n)
       toast(`You are playing as ${n}. Change your name here any time.`, 'info', 4200)
     }
-    create({ name: `${n} vs bot`, seats: 2, bots: 1, mapSize: 'small', turnSeconds: null }, true, n)
+    create({ name: `${n} vs bot`, seats: 2, bots: 1, mapSize: 'small', turnSeconds: null, fog: true }, true, n)
   }
 
   const mine = (games ?? []).filter((g) => getSeatToken(g.id))
@@ -218,10 +218,11 @@ function GameList({ title, games, action }: { title: string; games: GameSummary[
 function meta(g: GameSummary): string {
   const humans = g.seats.filter((s) => s.kind === 'human').map((s) => s.name).filter(Boolean)
   const who = humans.length ? humans.join(', ') : 'Only bots'
+  const fog = g.fog ? ' · Fog' : ''
   if (g.phase === 'lobby') {
     const free = g.seats.filter((s) => s.kind === 'open').length
-    return `${who} · ${free === 1 ? '1 open seat' : `${free} open seats`}`
+    return `${who} · ${free === 1 ? '1 open seat' : `${free} open seats`}${fog}`
   }
   if (g.phase === 'finished') return `${who} · Finished`
-  return `${who} · Turn ${g.turn}`
+  return `${who} · Turn ${g.turn}${fog}`
 }

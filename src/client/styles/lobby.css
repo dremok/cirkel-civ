@@ -155,3 +155,11 @@
   animation: pulse 1.8s ease-in-out infinite;
 }
 @keyframes pulse { 50% { opacity: 0.3; transform: scale(0.8); } }
+
+/* A running fog game, seen from outside. */
+.fog-hidden { max-width: 440px; margin: 0 auto; gap: 10px; }
+.fog-hidden-icon { width: 64px; height: 64px; display: grid; place-items: center; border-radius: 50%; color: var(--muted); background: rgba(42, 38, 34, 0.05); margin-bottom: 4px; }
+.fog-hidden p { line-height: 1.5; }
+.fog-hidden-seats { list-style: none; margin: 8px 0 10px; padding: 0; display: flex; flex-wrap: wrap; justify-content: center; gap: 8px 18px; font-size: 14.5px; color: var(--ink-2); }
+.fog-hidden-seats li { display: inline-flex; align-items: center; gap: 7px; }
+.fog-hidden-seats .icon { color: var(--ok); }

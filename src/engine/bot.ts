@@ -30,8 +30,10 @@ import {
   unitRange,
   unitRangedStrength,
 } from './combat.ts'
-import { distance, neighbors, tilesInRange } from './hex.ts'
-import { edges, extractPath, pathField, pathTiming, type PathField } from './paths.ts'
+import { distance, neighbors, tileAt, tilesInRange } from './hex.ts'
+import { extractPath, knownEdges, pathField, pathTiming, type Edges, type PathField } from './paths.ts'
+import { mirror } from './mapgen.ts'
+import { exploredOf, lineOfSight } from './vision.ts'
 import { hashString, mulberry32, type Rng } from './rng.ts'
 import { isPassable, isWater } from './terrain.ts'
 import type {
@@ -48,6 +50,8 @@ const GOOD_SITE = 40
 const SITE_VALUE: Record<Biome, number> = {
   grass: 3, plains: 3, forest: 2.5, hills: 2.5, shallow: 2, deep: 1.5, beach: 0.5, mountain: 0, snow: 0,
 }
+/** A neighbour the bot has not seen yet (fog of war): about average. */
+const UNSEEN_SITE_VALUE = 1.8
 const MAX_SETTLERS = 2
 /** Score per turn of progress toward the objective. */
 const PROGRESS = 10
@@ -113,7 +117,14 @@ class Bot {
   private rangedThreat: number[][] = []
   private distCache = new Map<TileId, Float64Array>()
   private sites: Float64Array | null = null
-  private mode: 'gather' | 'attack' = 'gather'
+  private mode: 'gather' | 'attack' | 'explore' = 'gather'
+  /** The map's movement costs as I know them (unexplored land counts as open grass under fog). */
+  private readonly known: Edges
+  /** What I have explored (all 1 without fog). */
+  private readonly explored: Uint8Array
+  /** While exploring: the unit that scouts ahead. */
+  private scout = -1
+  private scoutGoal: TileId = -1
   private objective: TileId = -1
   private targetCity: City | null = null
   /** Massing at the staging tile before an assault (units gather tightly). */
@@ -134,6 +145,8 @@ class Bot {
     this.enemies = s.units.filter((u) => u.owner !== me)
     this.myCities = s.cities.filter((c) => c.owner === me)
     this.enemyCities = s.cities.filter((c) => c.owner !== me)
+    this.known = knownEdges(s, me)
+    this.explored = exploredOf(s, me)
   }
 
   run(): PlayerOrders {
@@ -161,7 +174,7 @@ class Bot {
     const through = new Uint8Array(n)
     for (const u of this.mine) through[u.tile] = 1
     for (const c of this.myCities) through[c.tile] = 1
-    const { nb } = edges(map)
+    const { nb } = this.known
     // Stamped visit marks instead of a Set per enemy.
     const seen = new Int32Array(n)
     const depth = new Int32Array(n)
@@ -174,7 +187,7 @@ class Bot {
     this.enemies.forEach((e, k) => {
       const st = UNITS[e.type]
       if (st.civilian) return
-      const reach = e.stance === 'hold' ? [e.tile] : pathField(map, e.tile, st.speed, { through, maxTurns: 1 }).reached
+      const reach = e.stance === 'hold' ? [e.tile] : pathField(map, e.tile, st.speed, { through, maxTurns: 1, edges: this.known }).reached
       stamp++
       for (const t of reach) mark(t, this.meleeThreat, k)
       for (let x = e.tile * 6; x < e.tile * 6 + 6; x++) if (nb[x] >= 0) mark(nb[x], this.meleeThreat, k)
@@ -235,7 +248,7 @@ class Bot {
         total += 0.6 * damage(unitRangedStrength(map, e, tile), unitDefense(map, v, null, e.tile, { city: null }))
       }
       for (const c of this.enemyCities) {
-        if (c.hp > 0 && cityCanShoot(map, c, tile)) {
+        if (c.hp > 0 && cityCanShoot(map, c, tile) && this.sees(c.tile, tile)) {
           total += damage(cityRangedStrength(map, c, tile), unitDefense(map, v, null, c.tile, { city: null }))
         }
       }
@@ -248,7 +261,7 @@ class Bot {
   private distTo(goal: TileId): Float64Array {
     let d = this.distCache.get(goal)
     if (d) return d
-    const { nb, back } = edges(this.s.map)
+    const { nb, back } = this.known
     const n = this.s.map.tiles.length
     d = new Float64Array(n).fill(Infinity)
     d[goal] = 0
@@ -303,7 +316,8 @@ class Bot {
   }
 
   private chooseStrategy(): void {
-    if (this.enemyCities.length === 0 || this.myCities.length === 0) return
+    if (this.myCities.length === 0) return
+    if (this.enemyCities.length === 0) return this.explore()
     const { map } = this.s
     const anchor = this.myCities.find((c) => c.capital) ?? this.myCities[0]
     const field = this.mine.filter((u) => !UNITS[u.type].civilian && this.cityAt[u.tile] < 0)
@@ -350,6 +364,40 @@ class Bot {
     const go = engaged >= theirs * 0.8 * edge || massed >= theirs * edge + 2
     this.objective = go ? target.tile : staging
     this.staging = !go
+  }
+
+  /** No rival city known (fog of war): the fastest field unit scouts toward the enemy's likely home
+   * (the mirrored start on two-player maps, else unexplored land near the middle); the rest wait in
+   * front of the city nearest to it. */
+  private explore(): void {
+    const { map } = this.s
+    this.mode = 'explore'
+    const home = this.myCities.find((c) => c.capital) ?? this.myCities[0]
+    const goal = this.exploreGoal(home.tile)
+    const field = this.mine.filter((u) => !UNITS[u.type].civilian && this.cityAt[u.tile] < 0)
+    const scout = [...field].sort((a, b) => UNITS[b.type].speed - UNITS[a.type].speed || a.id - b.id)[0]
+    this.scout = scout ? scout.id : -1
+    this.targetCity = null
+    const front = [...this.myCities].sort((a, b) => distance(map, a.tile, goal) - distance(map, b.tile, goal) || a.id - b.id)[0]
+    this.objective = this.frontTile(front.tile, goal, 2)
+    this.scoutGoal = goal
+  }
+
+  private exploreGoal(home: TileId): TileId {
+    const { map } = this.s
+    if (this.s.players.length === 2) {
+      const mirrored = mirror(map.starts[this.me], map.width, map.height)
+      if (!this.explored[mirrored]) return mirrored
+    }
+    const mid = tileAt(map, Math.floor(map.width / 2), Math.floor(map.height / 2)) ?? home
+    let best = home
+    let bestD = Infinity
+    for (let t = 0; t < map.tiles.length; t++) {
+      if (this.explored[t]) continue
+      const d = distance(map, t, mid) * 2 + distance(map, t, home)
+      if (d < bestD) [best, bestD] = [t, d]
+    }
+    return best
   }
 
   /** Where to mass before storming `target`: 3-4 hexes out, at most about a turn and a half of real
@@ -404,6 +452,7 @@ class Bot {
       if (serious && d <= (attacking ? 3 : 5) && (!defend || d < defend.d)) defend = { d, intruder }
     }
     if (defend) return defend.intruder.tile
+    if (this.mode === 'explore' && u.id === this.scout) return this.scoutGoal
     return this.objective >= 0 ? this.objective : u.tile
   }
 
@@ -424,7 +473,7 @@ class Bot {
       if (civilian) enter[c.tile] = 1
     }
     for (const t of this.stayers) if (t !== u.tile) through[t] = 1
-    return pathField(this.s.map, u.tile, UNITS[u.type].speed, { through, enter, maxTurns })
+    return pathField(this.s.map, u.tile, UNITS[u.type].speed, { through, enter, maxTurns, edges: this.known })
   }
 
   /** Can `u` end the turn on `tile` without fighting a friend for it or blocking a friend's route? */
@@ -467,7 +516,7 @@ class Bot {
     const close = new Uint8Array(n)
     for (const c of this.myCities) for (const t of tilesInRange(map, c.tile, SITE_REACH)) close[t] = 1
     for (let t = 0; t < n; t++) {
-      if (!close[t] || !isPassable(map, t)) continue
+      if (!close[t] || !this.explored[t] || !isPassable(map, t)) continue
       let near = Infinity
       let mineNear = Infinity
       let enemyNear = Infinity
@@ -480,7 +529,7 @@ class Bot {
       if (near < MIN_CITY_DISTANCE || mineNear > SITE_REACH || enemyNear < 4 || enemyNear < mineNear - 1) continue
       // Each neighbour is faced by three outer plots (one corner, two sides).
       let v = 0
-      for (const nb of neighbors(map, t)) v += SITE_VALUE[map.tiles[nb].biome] * 4
+      for (const nb of neighbors(map, t)) v += (this.explored[nb] ? SITE_VALUE[map.tiles[nb].biome] : UNSEEN_SITE_VALUE) * 4
       if (map.tiles[t].biome === 'hills') v += 3 // defensible
       v -= Math.max(0, mineNear - 3) * 3
       v -= this.meleeThreat[t].length * 6
@@ -608,7 +657,7 @@ class Bot {
     // real paths) and nobody walks back to it. The assault itself goes all the way in.
     const massing = this.staging && objective === this.objective && !!this.targetCity
     const goal = this.distTo(massing ? this.targetCity!.tile : objective)
-    const slack = objective === this.targetCity?.tile ? 0 : massing ? goal[this.objective] / perTurn : 1
+    const slack = objective === this.targetCity?.tile || objective === this.scoutGoal ? 0 : massing ? goal[this.objective] / perTurn : 1
     const caution = this.mode === 'attack' ? 0.35 : 0.6
     let best: Option = { unit: u, field: f, dest: u.tile, end: u.tile, stance: 'hold', target: null, v: -Infinity }
     const consider = (o: Option) => {
@@ -659,8 +708,13 @@ class Bot {
     return best
   }
 
+  /** With fog, shooting needs a line of sight (same rule as resolveTurn). */
+  private sees(from: TileId, to: TileId): boolean {
+    return !this.s.fog || lineOfSight(this.s.map, from, to)
+  }
+
   private nearEnemyCity(t: TileId): boolean {
-    for (const c of this.enemyCities) if (c.hp > 0 && cityCanShoot(this.s.map, c, t)) return true
+    for (const c of this.enemyCities) if (c.hp > 0 && cityCanShoot(this.s.map, c, t) && this.sees(c.tile, t)) return true
     return false
   }
 
@@ -693,7 +747,7 @@ class Bot {
     const v: Unit = { ...u, tile }
     let best: { v: number; tile: TileId; unit?: number; d: number } | null = null
     for (const e of this.enemies) {
-      if (!inRange(map, tile, e.tile, unitRange(u))) continue
+      if (!inRange(map, tile, e.tile, unitRange(u)) || !this.sees(tile, e.tile)) continue
       const ci = this.cityAt[e.tile]
       if (ci >= 0 && this.s.cities[ci].owner === e.owner && this.s.cities[ci].hp > 0) continue
       const left = e.hp - (this.planned.get(e.id) ?? 0)
@@ -703,7 +757,7 @@ class Bot {
       if (!best || val > best.v) best = { v: val, tile: e.tile, unit: e.id, d }
     }
     for (const c of this.enemyCities) {
-      if (c.hp <= 0 || !inRange(map, tile, c.tile, unitRange(u))) continue
+      if (c.hp <= 0 || !inRange(map, tile, c.tile, unitRange(u)) || !this.sees(tile, c.tile)) continue
       const d = damage(unitRangedStrength(map, v, c.tile), cityDefense(map, c, tile))
       const val = (d / CITY_MAX_HP) * this.cityValue(c) * (this.mode === 'attack' ? 0.7 : 0.2)
       if (!best || val > best.v) best = { v: val, tile: c.tile, d }

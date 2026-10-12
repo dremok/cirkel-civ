@@ -17,7 +17,7 @@ describe('pathTiming', () => {
   it('agrees with resolveTurn when nothing is in the way', () => {
     let checked = 0
     for (const seed of ['p1', 'p2', 'p3']) {
-      const game = createGame({ seed, players })
+      const game = createGame({ seed, players, fog: false })
       for (const u0 of game.units) {
         const cityTiles = new Set(game.cities.map((c) => c.tile))
         const land = game.map.tiles.filter((t) => isPassable(game.map, t.id) && t.id !== u0.tile && !cityTiles.has(t.id))
@@ -86,7 +86,7 @@ describe('findPath', () => {
   })
 
   it('reachableThisTurn is exactly the tiles a fastest path enters in turn 0', () => {
-    const game = createGame({ seed: 'reach', players })
+    const game = createGame({ seed: 'reach', players, fog: false })
     for (const u of game.units) {
       const reach = new Set(reachableThisTurn(game, u.id))
       for (const t of game.map.tiles) {

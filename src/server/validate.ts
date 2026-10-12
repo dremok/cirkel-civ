@@ -59,6 +59,10 @@ function createOptions(v: unknown): CreateOptions {
     opts.turnSeconds = t
   }
   if (v.seed !== undefined && v.seed !== null && v.seed !== '') opts.seed = str(v.seed, 'options.seed', 64)
+  if (v.fog !== undefined && v.fog !== null) {
+    if (typeof v.fog !== 'boolean') fail('options.fog must be a boolean')
+    opts.fog = v.fog
+  }
   return opts
 }
 

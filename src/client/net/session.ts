@@ -20,6 +20,8 @@ export interface GameSnapshot {
   missing: boolean
   /** Bumped on every 'state' message, so effects can react to repeats. */
   stateSeq: number
+  /** A running fog-of-war game: spectators only get the summary until it ends. */
+  fogHidden: boolean
 }
 
 export class GameSession {
@@ -37,7 +39,7 @@ export class GameSession {
     const tok = getSeatToken(gameId)
     this.snap = {
       gameId, status: this.conn.status, summary: null, seat: tok?.seat ?? null, host: false,
-      view: null, missing: false, stateSeq: 0,
+      view: null, missing: false, stateSeq: 0, fogHidden: false,
     }
     this.unsub.push(this.conn.subscribe((m) => this.onMessage(m)))
     this.unsub.push(this.conn.onStatus((s) => {
@@ -103,11 +105,16 @@ export class GameSession {
       case 'state':
         if (m.gameId !== this.gameId) return
         this.awaitingHello = false
-        this.patch({ view: m, stateSeq: this.snap.stateSeq + 1, missing: false })
+        this.patch({ view: m, stateSeq: this.snap.stateSeq + 1, missing: false, fogHidden: false })
         return
       case 'error': {
         const code = m.code
         if (code === 'stale_turn') return
+        if (code === 'fog_hidden') {
+          this.awaitingHello = false
+          this.patch({ fogHidden: true, view: null })
+          return
+        }
         const hadToken = !!getSeatToken(this.gameId)
         if (code === 'bad_token' || code === 'kicked' || (!code && this.awaitingHello && hadToken)) {
           // The seat is gone: forget the token and keep watching.

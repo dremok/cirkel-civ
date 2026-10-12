@@ -30,7 +30,7 @@ describe('gym protocol', () => {
   it('helps with paths and baseline orders, and reports errors', () => {
     const gym = new Gym()
     expect(() => gym.handle({ cmd: 'step' })).toThrow(/reset/)
-    const r = gym.handle({ cmd: 'reset', config: { seed: 'gym-help', players: 3, agents: [0, 2] } })
+    const r = gym.handle({ cmd: 'reset', config: { seed: 'gym-help', players: 3, agents: [0, 2], fog: false } })
     expect(Object.keys(r.observations as object)).toEqual(['0', '2'])
     const state = (r.observations as Record<string, { state: GameState }>)['0'].state
     const u = state.units.find((x) => x.owner === 0)!

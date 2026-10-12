@@ -1,5 +1,5 @@
 // Headless bot-vs-bot games: win rates per seat, game length and engine speed.
-//   npx tsx scripts/sim.ts --games 200 --seats 2 [--size small] [--vs bot|random|idle] [--max-turns 60] [--seed sim] [--verbose]
+//   npx tsx scripts/sim.ts --games 200 --seats 2 [--size small] [--vs bot|random|idle] [--max-turns 60] [--seed sim] [--no-fog] [--verbose]
 // --vs sets the policy of every seat except seat 0 (which is always the bot).
 
 import { botOrders, randomOrders } from '../src/engine/bot.ts'
@@ -27,6 +27,7 @@ const maxTurns = Number(arg('max-turns', '60'))
 const vs = arg('vs', 'bot')
 const prefix = arg('seed', 'sim')
 const verbose = process.argv.includes('--verbose')
+const fog = !process.argv.includes('--no-fog')
 if (!POLICIES[vs]) throw new Error(`--vs must be one of ${Object.keys(POLICIES).join(', ')}`)
 
 const wins = new Array(seats).fill(0)
@@ -47,6 +48,7 @@ for (let g = 0; g < games; g++) {
     players: Array.from({ length: seats }, (_, i) => ({ name: `S${i}`, kind: 'bot' as const })),
     mapSize: size,
     maxTurns,
+    fog,
   })
   while (s.winner === null) {
     const orders: Record<number, PlayerOrders> = {}
@@ -84,7 +86,7 @@ for (let g = 0; g < games; g++) {
 
 const elapsed = (performance.now() - t0) / 1000
 const pct = (x: number) => `${((100 * x) / games).toFixed(1)}%`
-console.log(`${games} games, ${seats} seats, ${size} map, seat 0 = bot vs ${vs}`)
+console.log(`${games} games, ${seats} seats, ${size} map, fog ${fog ? 'on' : 'off'}, seat 0 = bot vs ${vs}`)
 for (let i = 0; i < seats; i++) {
   console.log(`  seat ${i}: ${pct(wins[i])} wins, avg ${(endCities[i] / games).toFixed(1)} cities and ${(endUnits[i] / games).toFixed(1)} units at the end`)
 }

@@ -46,6 +46,7 @@ export function makeState(map: GameMap, units: Unit[], cities?: City[], players 
     cities: cs,
     nextId: nextTestId + 10000,
     winner: null,
+    fog: null,
   }
 }
 

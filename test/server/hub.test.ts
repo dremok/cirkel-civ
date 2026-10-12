@@ -6,39 +6,15 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as engine from '../../src/engine/index.ts'
 import type { GameState } from '../../src/engine/types.ts'
-import { Hub, type Conn } from '../../src/server/hub.ts'
+import { Hub } from '../../src/server/hub.ts'
 import { Store } from '../../src/server/store.ts'
-import type { ClientMessage, ServerMessage } from '../../src/shared/protocol.ts'
+import { Peer } from './peer.ts'
 
 vi.mock('../../src/engine/index.ts', async (importOriginal) => {
   const real = await importOriginal<typeof import('../../src/engine/index.ts')>()
   return { ...real, resolveTurn: vi.fn(real.resolveTurn) }
 })
 const resolveTurn = vi.mocked(engine.resolveTurn)
-
-type Msg<T extends ServerMessage['type']> = Extract<ServerMessage, { type: T }>
-
-class Peer {
-  inbox: ServerMessage[] = []
-  conn: Conn
-  constructor(private hub: Hub) {
-    this.conn = hub.open((data) => this.inbox.push(JSON.parse(data)))
-  }
-  send(msg: ClientMessage) {
-    this.hub.receive(this.conn, JSON.stringify(msg))
-  }
-  /** Removes and returns every message of `type` received so far. */
-  take<T extends ServerMessage['type']>(type: T): Msg<T>[] {
-    const out = this.inbox.filter((m) => m.type === type) as Msg<T>[]
-    this.inbox = this.inbox.filter((m) => m.type !== type)
-    return out
-  }
-  last<T extends ServerMessage['type']>(type: T): Msg<T> {
-    const all = this.take(type)
-    if (!all.length) throw new Error(`no '${type}' in inbox`)
-    return all[all.length - 1]
-  }
-}
 
 /** A next state with tweaks, the way a real engine would return it. */
 function next(state: GameState, tweak: (s: GameState) => void = () => {}) {

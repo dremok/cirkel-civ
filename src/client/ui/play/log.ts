@@ -26,7 +26,8 @@ export function describeTurn(prev: GameState, events: GameEvent[], next: GameSta
   const units = new Map<UnitId, Unit>()
   for (const u of prev.units) units.set(u.id, u)
   for (const u of next.units) if (!units.has(u.id)) units.set(u.id, u)
-  for (const e of events) if (e.kind === 'spawn') units.set(e.unit.id, e.unit)
+  // Under fog, enemy units out of sight are not in `prev`: they are introduced by 'spotted'.
+  for (const e of events) if (e.kind === 'spawn' || e.kind === 'spotted') units.set(e.unit.id, e.unit)
   const cities = new Map<number, City>()
   for (const c of prev.cities) cities.set(c.id, c)
   for (const c of next.cities) if (!cities.has(c.id)) cities.set(c.id, c)
@@ -154,10 +155,19 @@ export function describeTurn(prev: GameState, events: GameEvent[], next: GameSta
       case 'halt': {
         const u = units.get(e.unit)
         if (u?.owner !== me || e.reason === 'engaged' || halted.has(e.unit)) return
-        // A blocked step only matters if the unit never got going this turn.
-        if (e.reason === 'blocked' && moved.has(e.unit)) return
+        // A plan into unexplored land that met water or a cliff: the engine drops the path.
+        const after = next.units.find((x) => x.id === e.unit)
+        const goal = u?.path[u.path.length - 1]
+        const dropped = e.reason === 'blocked' && goal !== undefined && after !== undefined && after.path.length === 0 && after.tile !== goal
+        // Otherwise a blocked step only matters if the unit never got going this turn.
+        if (e.reason === 'blocked' && moved.has(e.unit) && !dropped) return
         halted.add(e.unit)
-        const text = e.reason === 'contact' ? `${unitName(e.unit, true)} stopped on contact with the enemy.` : `${unitName(e.unit, true)} stood still: its path was blocked.`
+        const text =
+          e.reason === 'contact'
+            ? `${unitName(e.unit, true)} stopped on contact with the enemy.`
+            : dropped
+              ? `${unitName(e.unit, true)} found the way ahead impassable and stopped. Give it a new path.`
+              : `${unitName(e.unit, true)} stood still: its path was blocked.`
         add(e, i, me, text, null, u.tile)
         return
       }

@@ -73,6 +73,12 @@ SOUNDS = {
     "fail": dict(bus="sfx", dur=0.6, n=2, influence=0.6, tail=0.45,
         prompt="A dull muted wooden thunk, a wooden stake failing to go into hard ground. Short. " + NO_VOICE),
 
+    # --------------------------------------------------------------------------------- Fog
+    "explore": dict(bus="sfx", dur=2.0, n=3, influence=0.5, tail=1.9,
+        prompt="A soft airy breath of wind with a delicate high shimmer, like clouds gently parting to reveal sunlit land. Slow gentle swell and fade, restrained. " + NO_VOICE),
+    "spotted": dict(bus="sfx", dur=2.0, n=2, influence=0.5, tail=1.8, lp=5000,
+        prompt="One short soft low note on a wooden herding horn, far away across a valley, calm, natural echo. No voices."),
+
     # ---------------------------------------------------------------------------- Ambience
     "amb_sea": dict(bus="amb", dur=30, n=2, influence=0.4, loop=True, hp=40, lp=9000,
         prompt="Gentle calm sea waves lapping on a sandy shore, soft distant surf, peaceful and continuous. No music, no voices."),

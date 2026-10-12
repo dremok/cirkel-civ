@@ -9,6 +9,7 @@ import {
 } from '../strings.ts'
 import { inRange, unitRange } from '../../../engine/combat.ts'
 import type { CityEconomy } from './economy.ts'
+import type { FogView } from './fog.ts'
 import { cityBuild, foundingCheck, isEnemyAt, planKind, planSteps, unitAt, unitOrder, type Draft } from './planning.ts'
 
 const STANCES: Stance[] = ['cautious', 'aggressive', 'hold']
@@ -199,21 +200,26 @@ export function UnitPanel({ state, draft, me, unit, editable, hint, actions, onC
   )
 }
 
-export function CityPanel({ state, draft, me, city, editable, economy, onBuild, onEnter, onClose }: {
+export function CityPanel({ state, draft, me, city, editable, economy: liveEconomy, fog, onBuild, onEnter, onClose }: {
   state: GameState
   draft: Draft
   me: PlayerId | null
   city: City
   editable: boolean
   economy: CityEconomy | null
+  fog: FogView
   onBuild: (item: BuildItem) => void
   onEnter: () => void
   onClose: () => void
 }) {
   const mine = me !== null && city.owner === me
   const owner = state.players[city.owner]
+  // A rival city out of sight is a memory: show what is known from outside, as last seen.
+  const remembered = !mine && !fog.visible(city.tile)
+  // A rival's output is visible only in games without fog (and never from memory).
+  const economy = mine || !fog.on ? liveEconomy : null
   const build = cityBuild(draft, city)
-  const garrison = unitAt(state, city.tile)
+  const garrison = remembered ? undefined : unitAt(state, city.tile)
   const walls = hasBuilding(city.interior, 'wall')
   const turnsFor = (item: BuildItem) => {
     if (!economy || economy.prod <= 0) return null
@@ -223,7 +229,7 @@ export function CityPanel({ state, draft, me, city, editable, economy, onBuild, 
   const sub = [
     city.capital ? 'Capital' : null,
     mine ? null : owner?.name,
-    `${city.pop} of ${economy?.housing ?? city.pop} citizens`,
+    mine ? `${city.pop} of ${economy?.housing ?? city.pop} citizens` : city.pop === 1 ? '1 citizen' : `${city.pop} citizens`,
   ].filter(Boolean).join(' · ')
   const growth = !economy
     ? null
@@ -253,6 +259,12 @@ export function CityPanel({ state, draft, me, city, editable, economy, onBuild, 
         )}
         <span className={walls ? '' : 'muted'}><Icon name="walls" size={16} />{walls ? 'Walls' : 'No walls'}</span>
         {garrison && <span><Icon name="shield" size={16} />{garrison.owner === city.owner ? 'Garrison' : 'Occupied'}</span>}
+        {remembered && (
+          <span className="muted">
+            <Icon name="eyeOff" size={16} />
+            {fog.lastSeen(city.id) !== null ? `Last seen turn ${fog.lastSeen(city.id)}` : 'Out of sight'}
+          </span>
+        )}
       </div>
       {growth && mine && <p className="panel-stats">{growth}</p>}
 
@@ -301,7 +313,16 @@ export function CityPanel({ state, draft, me, city, editable, economy, onBuild, 
   )
 }
 
-export function TilePanel({ state, tile, onClose }: { state: GameState; tile: TileId; onClose: () => void }) {
+
+export function TilePanel({ state, tile, fog, onClose }: { state: GameState; tile: TileId; fog: FogView; onClose: () => void }) {
+  // Under the clouds nothing is known: no terrain, no height, no yields.
+  if (!fog.explored(tile)) {
+    return (
+      <section className="panel glass panel-compact" aria-label="Unexplored">
+        <PanelHead icon={<Icon name="cloud" size={20} />} owner={null} title="Unexplored" sub="Send a unit to see what lies here" onClose={onClose} />
+      </section>
+    )
+  }
   const t = state.map.tiles[tile]
   const y = TILE_YIELD[t.biome]
   const notes: string[] = []
@@ -309,10 +330,11 @@ export function TilePanel({ state, tile, onClose }: { state: GameState; tile: Ti
   if (t.biome === 'forest' || t.biome === 'hills') notes.push('slow to enter')
   if (t.biome === 'mountain' || t.biome === 'snow') notes.push('impassable')
   if (t.biome === 'deep' || t.biome === 'shallow') notes.push('water')
+  const outOfSight = !fog.visible(tile)
   return (
     <section className="panel glass panel-compact" aria-label={BIOME_NAME[t.biome]}>
       <PanelHead
-        icon={<Icon name="eye" size={20} />}
+        icon={<Icon name={outOfSight ? 'eyeOff' : 'eye'} size={20} />}
         owner={null}
         title={BIOME_NAME[t.biome]}
         sub={`Height ${t.height}${notes.length ? ` · ${notes.join(', ')}` : ''}`}
@@ -321,6 +343,7 @@ export function TilePanel({ state, tile, onClose }: { state: GameState; tile: Ti
       <div className="city-stats num">
         <span><Icon name="food" size={16} />{y.food} food</span>
         <span><Icon name="prod" size={16} />{y.prod} production</span>
+        {outOfSight && <span className="muted"><Icon name="eyeOff" size={16} />Out of sight</span>}
       </div>
     </section>
   )

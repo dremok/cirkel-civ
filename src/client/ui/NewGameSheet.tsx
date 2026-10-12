@@ -22,6 +22,7 @@ export function NewGameSheet({ defaultName, onClose, onCreate }: { defaultName: 
   const [bots, setBots] = useState(0)
   const [mapSize, setMapSize] = useState<NonNullable<CreateOptions['mapSize']>>('small')
   const [timer, setTimer] = useState<number | null>(null)
+  const [fog, setFog] = useState(true)
 
   const setSeatCount = (n: number) => {
     setSeats(n)
@@ -35,7 +36,7 @@ export function NewGameSheet({ defaultName, onClose, onCreate }: { defaultName: 
         className="form"
         onSubmit={(e) => {
           e.preventDefault()
-          onCreate({ name: name.trim() || defaultName, seats, bots, mapSize, turnSeconds: timer })
+          onCreate({ name: name.trim() || defaultName, seats, bots, mapSize, turnSeconds: timer, fog })
         }}
       >
         <label className="field">
@@ -86,6 +87,14 @@ export function NewGameSheet({ defaultName, onClose, onCreate }: { defaultName: 
             ))}
           </div>
         </div>
+
+        <button type="button" className="switch-row" role="switch" aria-checked={fog} onClick={() => setFog(!fog)}>
+          <span className="switch-text">
+            <span className="switch-title">Fog of war</span>
+            <span className="switch-hint">Discover the map as you go</span>
+          </span>
+          <span className="switch" aria-hidden="true" />
+        </button>
 
         <p className="form-note muted">
           {seats - bots - 1 === 0

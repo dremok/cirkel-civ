@@ -38,6 +38,11 @@ export interface World {
   /** Screen areas covered by UI (CSS px from each edge of the canvas). Framing and focus centre
    * on the uncovered rest. Call whenever the HUD changes size. */
   setViewInsets?(insets: { top: number; bottom: number; left: number; right: number }): void
+  /** Fog of war (one byte per TileId, 1 = yes). Unexplored tiles lie under a dreamy cloud sea;
+   * explored tiles out of sight are softly veiled. `null` = no fog (everything clear). With
+   * `animate`, newly explored tiles part their clouds and newly seen tiles lift their veil over
+   * about 0.8 s (used tick by tick during replay). */
+  setFog?(fog: { explored: Uint8Array; visible: Uint8Array } | null, opts?: { animate?: boolean }): void
 }
 
 /** low/medium render straight to the screen; high adds bloom, close-zoom tilt-shift and SMAA (the
