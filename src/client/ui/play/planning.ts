@@ -1,6 +1,6 @@
 // The player's draft plan for the current turn, and what the renderer should show for it.
 import { distance, findPath, MIN_CITY_DISTANCE, pathTiming, reachableThisTurn } from '../../../engine/index.ts'
-import type { BuildItem, City, GameState, PlayerId, PlayerOrders, TileId, Unit, UnitId, UnitOrder } from '../../../engine/types.ts'
+import type { BuildItem, City, CityFocus, GameState, PlayerId, PlayerOrders, TileId, Unit, UnitId, UnitOrder } from '../../../engine/types.ts'
 import type { PlanStep, UnitPlan } from '../../render/api.ts'
 
 export type Draft = PlayerOrders
@@ -26,6 +26,15 @@ export function withCityBuild(draft: Draft, c: City, item: BuildItem | null): Dr
   return { ...draft, cities: { ...draft.cities, [c.id]: item } }
 }
 
+export function cityFocus(draft: Draft, c: City): CityFocus {
+  return draft.focus?.[c.id] ?? c.interior.focus
+}
+
+export function withCityFocus(draft: Draft, c: City, focus: CityFocus): Draft {
+  return { ...draft, focus: { ...draft.focus, [c.id]: focus } }
+}
+
+
 export function unitAt(state: GameState, tile: TileId): Unit | undefined {
   return state.units.find((u) => u.tile === tile)
 }
@@ -47,10 +56,10 @@ export function planKind(state: GameState, me: PlayerId, o: UnitOrder): PlanKind
   return last !== undefined && isEnemyAt(state, me, last) ? 'attack' : 'move'
 }
 
+/** Timed steps of a path. pathTiming covers only the valid prefix, so a path that turns invalid is cut short. */
 export function planSteps(state: GameState, unit: UnitId, path: TileId[]): PlanStep[] {
   if (!path.length) return []
-  const timing = pathTiming(state, unit, path)
-  return path.map((tile, i) => ({ tile, turn: timing[i]?.turn ?? 0, tick: timing[i]?.tick ?? 6 }))
+  return pathTiming(state, unit, path).map((t, i) => ({ tile: path[i], turn: t.turn, tick: t.tick }))
 }
 
 export function buildPlans(state: GameState, draft: Draft, me: PlayerId): UnitPlan[] {

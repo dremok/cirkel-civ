@@ -1,96 +1,55 @@
-// City economy: which tiles a city works, what it yields, and when it grows.
+// City economy: output comes from the buildings inside the city (city.ts), citizens eat, cities
+// grow up to their housing, and production pays for units and buildings.
 
-import { CITY_WORK_RADIUS, TILE_YIELD } from './config.ts'
-import { distance, tilesInRange } from './hex.ts'
-import type { City, GameState, TileId } from './types.ts'
+import { UNITS } from './config.ts'
+import {
+  BARRACKS_DISCOUNT, BASE_HOUSING, BUILDINGS, HOUSING_PER_HOUSE, TEMPLE_GROWTH_DISCOUNT, cityOutput, hasBuilding, type CityOutput,
+} from './city.ts'
+import type { BuildItem, City, CityInterior, GameMap, GameState } from './types.ts'
 
-/** The city centre yields its terrain plus this. */
-export const CENTER_BONUS = { food: 1, prod: 2 }
 /** Food eaten per citizen per turn. */
-export const FOOD_PER_POP = 2
+export const FOOD_PER_POP = 1
 
-/** Food needed to grow from `pop` to `pop + 1`: 16, 24, 34, 46, 60, ... */
+/** Food needed to grow from `pop` to `pop + 1` (before the temple discount): 12, 16, 20, 24, ... */
 export function growthThreshold(pop: number): number {
-  return 10 + 5 * pop + pop * pop
+  return 8 + 4 * pop
 }
 
-export interface CityYield {
-  food: number // gross food (before upkeep)
-  prod: number
-  worked: TileId[] // excluding the centre
+/** What the city makes this turn with its current citizens and focus. */
+export function outputOf(map: GameMap, c: City): CityOutput {
+  return cityOutput(map, c.tile, c.interior, c.pop)
 }
 
-/**
- * Worked tiles for every city. Each tile within radius 2 of a city belongs to the nearest city (ties:
- * the older city; between the same player's cities, the lower id). A tile equally near to two
- * players' cities of the same age is a border tile nobody works, so neither seat wins ties by id.
- * City centres and tiles with enemy units are never worked. A city works its `pop` best tiles:
- * most food + production, ties to more food.
- */
-export function cityYields(state: GameState): Map<number, CityYield> {
-  const { map } = state
-  const n = map.tiles.length
-  // Per tile: the best (distance, founding turn) claim, and which city / players hold it.
-  const owner = new Int32Array(n).fill(-1) // index into state.cities
-  const bestD = new Int32Array(n).fill(CITY_WORK_RADIUS + 1)
-  const bestF = new Float64Array(n).fill(Infinity)
-  const border = new Uint8Array(n)
-  const centre = new Uint8Array(n)
-  for (const c of state.cities) centre[c.tile] = 1
-  state.cities.forEach((c, ci) => {
-    for (const t of tilesInRange(map, c.tile, CITY_WORK_RADIUS)) {
-      const d = distance(map, c.tile, t)
-      if (d < bestD[t] || (d === bestD[t] && c.founded < bestF[t])) {
-        owner[t] = ci
-        bestD[t] = d
-        bestF[t] = c.founded
-        border[t] = 0
-      } else if (d === bestD[t] && c.founded === bestF[t]) {
-        const o = state.cities[owner[t]]
-        if (o.owner !== c.owner) border[t] = 1
-        else if (c.id < o.id) owner[t] = ci
-      }
-    }
-  })
-  const unitOwner = new Int16Array(n).fill(-1)
-  for (const u of state.units) unitOwner[u.tile] = u.owner
-  const tiles: TileId[][] = state.cities.map(() => [])
-  for (let t = 0; t < n; t++) {
-    const ci = owner[t]
-    if (ci < 0 || centre[t] || border[t]) continue
-    if (unitOwner[t] === -1 || unitOwner[t] === state.cities[ci].owner) tiles[ci].push(t)
-  }
-  const out = new Map<number, CityYield>()
-  state.cities.forEach((c, ci) => {
-    const cand = tiles[ci]
-    cand.sort((a, b) => {
-      const ya = TILE_YIELD[map.tiles[a].biome]
-      const yb = TILE_YIELD[map.tiles[b].biome]
-      return yb.food + yb.prod - (ya.food + ya.prod) || yb.food - ya.food || a - b
-    })
-    const worked = cand.slice(0, c.pop)
-    const y = TILE_YIELD[map.tiles[c.tile].biome]
-    let food = y.food + CENTER_BONUS.food
-    let prod = y.prod + CENTER_BONUS.prod
-    for (const t of worked) {
-      food += TILE_YIELD[map.tiles[t].biome].food
-      prod += TILE_YIELD[map.tiles[t].biome].prod
-    }
-    out.set(c.id, { food, prod, worked })
-  })
-  return out
+/** How many citizens the city has room for. */
+export function housingOf(interior: CityInterior): number {
+  return BASE_HOUSING + HOUSING_PER_HOUSE * interior.plots.filter((b) => b === 'house').length
 }
 
-/** One city's economy for the UI: net food and production per turn, the stored food it needs to
- * grow (compare with `city.food`), and the tiles it works. Null if there is no such city. */
-export function cityYield(state: GameState, cityId: number): { food: number; prod: number; foodToGrow: number; worked: TileId[] } | null {
-  const c = state.cities.find((x) => x.id === cityId)
-  if (!c) return null
-  const y = cityYields(state).get(cityId)!
-  return { food: foodSurplus(c, y), prod: y.prod, foodToGrow: growthThreshold(c.pop), worked: y.worked }
+/** Stored food the city needs for its next citizen: 25 % less while a temple is staffed. */
+export function growthNeed(c: City, out: CityOutput): number {
+  const temple = c.interior.plots.some((b, i) => b === 'temple' && out.staffed[i])
+  return Math.round(growthThreshold(c.pop) * (temple ? 1 - TEMPLE_GROWTH_DISCOUNT : 1))
 }
 
 /** Net food per turn (can be negative; the store never drops below 0). */
-export function foodSurplus(c: City, y: CityYield): number {
-  return y.food - FOOD_PER_POP * c.pop
+export function foodSurplus(c: City, out: CityOutput): number {
+  return out.food - FOOD_PER_POP * c.pop
+}
+
+/** Production a build item costs in this city: units are 25 % cheaper with barracks. */
+export function buildCost(c: City, item: BuildItem): number {
+  if (typeof item !== 'string') return BUILDINGS[item.building].cost
+  const discount = hasBuilding(c.interior, 'barracks') ? 1 - BARRACKS_DISCOUNT : 1
+  return Math.round(UNITS[item].cost * discount)
+}
+
+/** One city's economy for the UI. Null if there is no such city. */
+export function cityYield(
+  state: GameState,
+  cityId: number,
+): { food: number; prod: number; foodToGrow: number; housing: number; output: CityOutput } | null {
+  const c = state.cities.find((x) => x.id === cityId)
+  if (!c) return null
+  const out = outputOf(state.map, c)
+  return { food: foodSurplus(c, out), prod: out.prod, foodToGrow: growthNeed(c, out), housing: out.housing, output: out }
 }

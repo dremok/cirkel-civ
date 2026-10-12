@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { marked } from 'marked'
+import { audio } from '../audio/index.ts'
 import { Icon } from './icons.tsx'
 
 const SOURCES = {
@@ -10,6 +11,11 @@ const SOURCES = {
 export function DocPage({ doc }: { doc: keyof typeof SOURCES }) {
   const [html, setHtml] = useState<string | null>(null)
   const [missing, setMissing] = useState(false)
+  // Reading is quiet.
+  useEffect(() => {
+    audio.music(null)
+    audio.ambience(null)
+  }, [])
 
   useEffect(() => {
     let alive = true

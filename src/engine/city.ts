@@ -6,23 +6,10 @@
 // one direction, a "side" plot (between two corners) faces two.
 
 import { AXIAL_DIRS, axialToOffset, SQRT3 } from './hex.ts'
-import type { Biome, GameMap, TileId } from './types.ts'
+import type { Biome, BuildingType, CityFocus, CityInterior, GameMap, TileId } from './types.ts'
 
-export type BuildingType =
-  | 'house' | 'farm' | 'sawmill' | 'workshop' | 'market' | 'harbor' | 'barracks' | 'temple' | 'tower' | 'wall'
-
-export type CityFocus = 'growth' | 'production' | 'balance'
-
-export interface CityInterior {
-  /** One entry per plot; plot 0 (the square) is always null. */
-  plots: (BuildingType | null)[]
-  focus: CityFocus
-}
-
-export interface BuildingOrder {
-  building: BuildingType
-  plot: number
-}
+// The interior types live in types.ts (the shared contract); re-exported here for convenience.
+export type { BuildingOrder, BuildingType, CityFocus, CityInterior } from './types.ts'
 
 export type Placement = 'any' | 'inner' | 'outer'
 
@@ -53,7 +40,9 @@ export const BUILDINGS: Record<BuildingType, BuildingInfo> = {
 export const FOCUS_NAMES: Record<CityFocus, string> = { growth: 'Growth', production: 'Production', balance: 'Balance' }
 
 export const PLOT_COUNT = 19
-export const SQUARE_YIELD = { food: 2, prod: 2 }
+export const SQUARE_YIELD = { food: 2, prod: 4 }
+/** What a staffed farm, sawmill, harbor, workshop or market makes before its bonuses. */
+export const JOB_BASE = 2
 export const BASE_HOUSING = 2
 export const HOUSING_PER_HOUSE = 2
 /** Citizens without a job still work the fields: */
@@ -161,11 +150,11 @@ export function buildingYield(map: GameMap, tile: TileId, interior: CityInterior
   const near = PLOT_NEIGHBORS[plot].map((i) => interior.plots[i])
   const count = (pred: (b: Biome) => boolean) => faced.filter(pred).length
   switch (b) {
-    case 'farm': return { food: 1 + count((x) => x === 'grass' || x === 'plains'), prod: 0 }
-    case 'sawmill': return { food: 0, prod: 1 + count((x) => x === 'forest' || x === 'hills') }
-    case 'harbor': return { food: 1 + count((x) => x === 'shallow' || x === 'deep'), prod: 0 }
-    case 'workshop': return { food: 0, prod: 1 + near.filter((n) => n === 'workshop' || n === 'sawmill').length }
-    case 'market': return { food: 1 + Math.min(3, near.filter((n) => n === 'house').length), prod: 1 }
+    case 'farm': return { food: JOB_BASE + count((x) => x === 'grass' || x === 'plains'), prod: 0 }
+    case 'sawmill': return { food: 0, prod: JOB_BASE + count((x) => x === 'forest' || x === 'hills') }
+    case 'harbor': return { food: JOB_BASE + count((x) => x === 'shallow' || x === 'deep'), prod: 0 }
+    case 'workshop': return { food: 0, prod: JOB_BASE + near.filter((n) => n === 'workshop' || n === 'sawmill').length }
+    case 'market': return { food: JOB_BASE + Math.min(3, near.filter((n) => n === 'house').length), prod: 1 }
     case 'temple': return { food: 0, prod: 0 }
     default: return { food: 0, prod: 0 }
   }
@@ -204,7 +193,10 @@ export function cityOutput(map: GameMap, tile: TileId, interior: CityInterior, p
       default: return c.food + c.prod + (c.temple ? 1.5 : 0)
     }
   }
-  candidates.sort((a, b) => value(b) - value(a) || a.plot - b.plot)
+  // Equal value: food first (production first under the Production focus). Jobs still tied after
+  // that yield the same, so which one is staffed never changes the totals (or depends on plot order).
+  const second = (c: (typeof candidates)[number]) => (interior.focus === 'production' ? c.prod : c.food)
+  candidates.sort((a, b) => value(b) - value(a) || second(b) - second(a) || a.plot - b.plot)
   let food = SQUARE_YIELD.food
   let prod = SQUARE_YIELD.prod
   const workers = Math.max(0, pop)

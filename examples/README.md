@@ -39,7 +39,8 @@ seat is fair.
 {"units": {"12": {"path": [40, 41], "stance": "aggressive"},
            "15": {"path": [], "stance": "cautious", "found": true},
            "16": {"path": [], "stance": "hold", "target": 77}},
- "cities": {"3": "archer"}}
+ "cities": {"3": "archer", "9": {"building": "sawmill", "plot": 7}},
+ "focus": {"9": "production"}}
 ```
 
 - `path`: tiles to enter in order (each a neighbour of the previous). Ending on an enemy unit or city
@@ -48,7 +49,11 @@ seat is fair.
   (Aggressive: attacks adjacent enemies), `hold` (Hold: never moves, +50 % defence, Archers shoot the
   first enemy in range).
 - `found`: Settlers found a city when their path is done. `target`: an Archer's preferred volley tile.
-- City builds: `spear` (Spearman), `archer`, `rider`, `settler`, `walls`, or `null`.
+- City builds: a unit (`spear` for Spearman, `archer`, `rider`, `settler`; repeats until changed),
+  a building on one of the city's plots (`{"building": ..., "plot": 1..18}`, built once), or `null`.
+  A building that does not fit the plot is ignored; `docs/RULES.md` section 7 lists buildings and
+  plots, and `canPlace` / `cityOutput` in `src/engine/city.ts` are the reference.
+- `focus` (optional): which buildings get workers first when a city has more jobs than citizens.
 - Units you do not mention keep their previous orders. Invalid orders are cleaned or ignored, never
   an error, so a policy cannot crash the game. `moves` gives exactly the legal one-turn destinations,
   which is handy as an action mask.
@@ -58,8 +63,9 @@ seat is fair.
 `observations` has one entry per agent seat, keyed by seat number as a string:
 
 - `state`: the full `GameState` from that seat's point of view (see `src/engine/types.ts`): every
-  unit and city is visible (no fog of war yet), but other players' paths, founding flags, targets,
-  builds and stores are hidden. The static `map` is included only in the reset response.
+  unit and city, including each city's buildings (`interior.plots`), is visible (no fog of war yet),
+  but other players' paths, founding flags, targets, constructions and stores are hidden. The static
+  `map` is included only in the reset response.
 - `grid` (with `obs: "grid"` or `"both"`): flat row-major arrays of length `width x height`, index =
   tile id, -1 where empty: `unitOwner`, `unitType`, `unitHp`, `unitStance`, `cityOwner`, `cityPop`,
   `cityHp`, `cityWalls`. The reset response's `map` adds `tileHeight` and `biome` planes and the index
@@ -73,7 +79,7 @@ shifted half a hex to the right. On an even row the neighbours of `(c, r)` are `
 
 The engine does not shape rewards. `winner` is the seat that won (or `"draw"`) once `done` is true:
 by taking every enemy city, or by the best `scores` after the last turn (10 per city, 3 per citizen,
-1 per unit). A score difference per turn is a reasonable dense reward to start with.
+1 per building and 3 more per temple, 1 per unit). A score difference per turn is a reasonable dense reward to start with.
 
 ## Speed
 

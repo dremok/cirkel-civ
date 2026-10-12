@@ -2,8 +2,12 @@
 // No dice: damage = 3 x strength ratio, rounded, clamped to 1..10 (see docs/RULES.md).
 
 import { CITY_DEFENSE, CITY_MAX_HP, CITY_RANGE, CITY_RANGED, MODIFIERS, UNITS, UNIT_MAX_HP } from './config.ts'
-import { distance } from './hex.ts'
+import { PLOTS, fortifiedSides } from './city.ts'
+import { AXIAL_DIRS, SQRT3, distance } from './hex.ts'
 import type { City, GameMap, TileId, Unit } from './types.ts'
+
+/** Towers add at most this much to a city's shooting strength on one side. */
+const MAX_TOWER_BONUS = 2
 
 const DAMAGE_SCALE = 3
 const MIN_DAMAGE = 1
@@ -31,6 +35,40 @@ export function damage(attack: number, defense: number): number {
   return Math.min(MAX_DAMAGE, Math.max(MIN_DAMAGE, raw))
 }
 
+/** The city's sides (0..5, AXIAL_DIRS order) that `other` lies on, by angle. A tile exactly between
+ * two sides lies on both, so the rule is the same however the map is turned. */
+export function sidesToward(map: GameMap, cityTile: TileId, other: TileId): number[] {
+  const a = map.tiles[cityTile]
+  const b = map.tiles[other]
+  const dq = b.q - a.q
+  const dr = b.r - a.r
+  const vx = SQRT3 * (dq + dr / 2)
+  const vz = 1.5 * dr
+  const dots = AXIAL_DIRS.map(([q, r]) => vx * SQRT3 * (q + r / 2) + vz * 1.5 * r)
+  const best = Math.max(...dots)
+  const out: number[] = []
+  dots.forEach((d, i) => {
+    if (d >= best - 1e-9) out.push(i)
+  })
+  return out
+}
+
+/** Does a wall cover the side of `city` that `from` lies on? */
+export function wallFacing(map: GameMap, city: City, from: TileId): boolean {
+  const walls = fortifiedSides(city.interior, 'wall')
+  return walls.size > 0 && sidesToward(map, city.tile, from).some((d) => walls.has(d))
+}
+
+/** Towers of `city` that face the side `to` lies on. */
+export function towersFacing(map: GameMap, city: City, to: TileId): number {
+  const sides = sidesToward(map, city.tile, to)
+  let n = 0
+  for (let p = 7; p < PLOTS.length; p++) {
+    if (city.interior.plots[p] === 'tower' && PLOTS[p].facing.some((d) => sides.includes(d))) n++
+  }
+  return n
+}
+
 /** Where a fight happens and what the defender stands on. */
 export interface DefenseContext {
   /** Own city on the defender's tile (null if none). */
@@ -41,10 +79,11 @@ export interface DefenseContext {
 export function unitDefense(map: GameMap, u: Unit, vs: Unit | null, fromTile: TileId, ctx: DefenseContext): number {
   let pct = heightBonus(map, u.tile, fromTile)
   if (map.tiles[u.tile].biome === 'forest') pct += MODIFIERS.forestDefense
-  if (u.stance === 'hold') pct += MODIFIERS.holdDefense
+  // Hold digs a unit in outside cities; inside its city the city's bonus applies instead.
+  if (u.stance === 'hold' && !ctx.city) pct += MODIFIERS.holdDefense
   if (ctx.city) {
     pct += MODIFIERS.cityDefense
-    if (ctx.city.walls) pct += MODIFIERS.wallsDefense
+    if (wallFacing(map, ctx.city, fromTile)) pct += MODIFIERS.wallsDefense
   }
   return UNITS[u.type].defense * typeFactor(u, vs) * healthFactor(u.hp, UNIT_MAX_HP) * (1 + pct)
 }
@@ -65,7 +104,7 @@ export function clashStrength(u: Unit, vs: Unit): number {
 
 export function cityDefense(map: GameMap, c: City, fromTile: TileId): number {
   let pct = heightBonus(map, c.tile, fromTile)
-  if (c.walls) pct += MODIFIERS.wallsDefense
+  if (wallFacing(map, c, fromTile)) pct += MODIFIERS.wallsDefense
   return CITY_DEFENSE * healthFactor(c.hp, CITY_MAX_HP) * (1 + pct)
 }
 
@@ -73,8 +112,16 @@ export function unitRangedStrength(map: GameMap, u: Unit, toTile: TileId): numbe
   return (UNITS[u.type].ranged ?? 0) * healthFactor(u.hp, UNIT_MAX_HP) * (1 + heightBonus(map, u.tile, toTile))
 }
 
+/** City shooting strength toward `toTile`: +1 per tower facing that side (at most +2). */
 export function cityRangedStrength(map: GameMap, c: City, toTile: TileId): number {
-  return CITY_RANGED * healthFactor(c.hp, CITY_MAX_HP) * (1 + heightBonus(map, c.tile, toTile))
+  const towers = Math.min(MAX_TOWER_BONUS, towersFacing(map, c, toTile))
+  return (CITY_RANGED + towers) * healthFactor(c.hp, CITY_MAX_HP) * (1 + heightBonus(map, c.tile, toTile))
+}
+
+/** Can the city shoot `toTile`? Range 2, +1 on a side with a tower, +1 from high ground. */
+export function cityCanShoot(map: GameMap, c: City, toTile: TileId): boolean {
+  if (distance(map, c.tile, toTile) > CITY_RANGE + 2) return false
+  return inRange(map, c.tile, toTile, CITY_RANGE + (towersFacing(map, c, toTile) > 0 ? 1 : 0))
 }
 
 /** Range of a shooter on `from` against `to`: +1 from high ground (2+ levels above). */
@@ -86,8 +133,6 @@ export function inRange(map: GameMap, from: TileId, to: TileId, range: number): 
 export function unitRange(u: Unit): number {
   return UNITS[u.type].range ?? 0
 }
-
-export const cityRange = CITY_RANGE
 
 /** Preview of a melee: damage each side takes. */
 export function meleeOutcome(map: GameMap, att: Unit, def: Unit, defCity: City | null): { toDefender: number; toAttacker: number } {

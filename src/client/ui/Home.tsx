@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import type { CreateOptions, GameSummary, ServerMessage } from '../../shared/protocol.ts'
+import { audio } from '../audio/index.ts'
 import { connection } from '../net/connection.ts'
 import { errorText } from '../net/errors.ts'
 import { getName, getSeatToken, setName as storeName, setSeatToken } from '../net/storage.ts'
@@ -23,6 +24,12 @@ export function Home() {
   const pendingRef = useRef<Pending>(null)
   pendingRef.current = pending
   const [slow, setSlow] = useState(false)
+
+  // The home screen is quiet: a soft meadow, no music (and nothing at all before the first tap).
+  useEffect(() => {
+    audio.music(null)
+    audio.ambience('meadow')
+  }, [])
 
   useEffect(() => {
     const conn = connection()
@@ -61,6 +68,7 @@ export function Home() {
   }
 
   const create = (options: CreateOptions, bot: boolean) => {
+    audio.ui('confirm')
     setPending({ bot })
     connection().send({ type: 'create', options, playerName: playerName() || 'Player' })
   }

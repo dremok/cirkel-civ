@@ -4,7 +4,8 @@
     python3 examples/random_agent.py --games 3 --opponent bot
 
 Every turn it asks the engine for each unit's legal moves, picks one at random (or stays), picks a
-random stance, and a random build for each city. It loses to the built-in bot, which is the point:
+random stance, and for each city a random unit or a random building on a random plot (the engine
+ignores buildings that do not fit). It loses to the built-in bot, which is the point:
 the bot is the baseline to beat.
 """
 
@@ -16,7 +17,8 @@ import subprocess
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 STANCES = ["cautious", "aggressive", "hold"]
-BUILDS = ["spear", "archer", "rider", "settler", "walls"]
+UNITS = ["spear", "archer", "rider", "settler"]
+BUILDINGS = ["house", "farm", "sawmill", "workshop", "market", "harbor", "barracks", "temple", "tower", "wall"]
 
 
 class CirkelEnv:
@@ -69,8 +71,12 @@ def random_orders(env, state, seat, rng):
             order["found"] = rng.random() < 0.3
         units[str(u["id"])] = order
     for c in state["cities"]:
-        if c["owner"] == seat:
-            cities[str(c["id"])] = rng.choice(BUILDS)
+        if c["owner"] != seat:
+            continue
+        if rng.random() < 0.6:
+            cities[str(c["id"])] = rng.choice(UNITS)
+        else:
+            cities[str(c["id"])] = {"building": rng.choice(BUILDINGS), "plot": rng.randint(1, 18)}
     return {"units": units, "cities": cities}
 
 

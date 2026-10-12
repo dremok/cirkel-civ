@@ -1,7 +1,8 @@
 # Cirkel-Civ rules (engine v0.1)
 
 The precise ruleset implemented by `src/engine/rules.ts`. SPEC.md is the design; where it is silent or
-loose, this file decides. Numbers live in `src/engine/config.ts` and `src/engine/economy.ts`.
+loose, this file decides. Numbers live in `src/engine/config.ts`, `src/engine/city.ts` (buildings) and
+`src/engine/economy.ts`.
 
 Units: **Spearman** (`spear`), **Archer** (`archer`), **Rider** (`rider`), **Settler** (`settler`).
 Stances: **Cautious** (`cautious`), **Aggressive** (`aggressive`), **Hold** (`hold`). The code names
@@ -21,7 +22,10 @@ There is no randomness anywhere in the rules. The same state and orders always g
 - **Unit order:** `path` (tiles to enter, in order), `stance`, `found` (settlers), `target` (archers).
   A unit without a new order keeps its old path, stance, founding flag and target. Steps are removed
   from the path as the unit takes them, so a long path simply continues next turn.
-- **City order:** a build item (`spear`, `archer`, `rider`, `settler`, `walls`) or `null`.
+- **City order:** what the city works on: a unit type (`spear`, `archer`, `rider`, `settler`; repeats
+  until changed), a building on a plot (`{ "building": "farm", "plot": 9 }`; built once), or `null`.
+  A building order is only accepted if the building fits that plot right now (section 7).
+- **Focus order:** `focus: { cityId: "growth" | "production" | "balance" }` (section 7).
 - **Cleaning.** Orders for units or cities you do not own, unknown ids and malformed values are
   ignored. A path keeps its longest valid prefix: each step must be a passable neighbour of the
   previous tile, at most 64 steps. An enemy city ends a path (you attack it). Settlers stop before any
@@ -86,12 +90,12 @@ Every unit that is ready picks its step for this tick. **Ready** means its point
 - If the defender dies and the surviving attackers all belong to one player, the one that dealt the
   most damage **advances** into the tile (it consumes that step of its path, or drops its path if it
   was a lunge). Nobody advances into a city that still has hp.
-- **Cities.** A unit inside its own city defends with +50 % (+50 % more with walls). An empty enemy
-  city with hp defends itself (strength 4, +50 % with walls); bring it to 0 hp in melee and the
-  attacker advances and **captures** it. An empty city that already has 0 hp is captured by the first
-  unit that walks in, without a fight.
-- **Capture:** the city changes owner, keeps its walls, drops to 5 hp and loses one citizen (never
-  below 1). Its build, stores and capital status are cleared.
+- **Cities.** A unit inside its own city defends with +50 %, and +50 % more when the attacker comes
+  from a side covered by a wall (section 7). An empty enemy city with hp defends itself (strength 4,
+  +50 % from a walled side); bring it to 0 hp in melee and the attacker advances and **captures** it.
+  An empty city that already has 0 hp is captured by the first unit that walks in, without a fight.
+- **Capture:** the city changes owner, keeps its buildings, drops to 5 hp and loses one citizen
+  (never below 1). Its construction, stores and capital status are cleared.
 
 ### 4.5 Overwatch
 
@@ -114,8 +118,9 @@ All at once, from the state after tick 6:
 - Every **Archer** that has not fought in melee or a clash and has not fired: its ordered `target` if
   it is in range (an enemy unit there, or else an enemy city there); otherwise the weakest enemy unit
   in range; otherwise the enemy city in range with the least hp.
-- Every **city** with hp > 0 shoots the weakest enemy unit within 2.
-- **Range:** 2 for Archers and cities, +1 when the shooter stands 2 or more levels above the target.
+- Every **city** with hp > 0 shoots the weakest enemy unit in its range.
+- **Range:** 2 for Archers and cities, +1 when the shooter stands 2 or more levels above the target,
+  and for cities +1 on a side with a Tower.
 - **Garrisons are safe from arrows** while their city has hp: shots at a city tile hit the city. Once
   the city is at 0 hp (breached), its garrison can be shot.
 
@@ -132,8 +137,10 @@ sides take damage; shots only hurt the target. Units have 10 hp, cities 20.
 - **bonuses** (added up): higher ground +15 % per level above the opponent, at most +45 % (attacker or
   defender, and for shots); for the defender only: forest +25 %, Hold +50 %, inside its own city +50 %,
   walls +50 %.
-- **Cities:** defence 4, shooting 3, both scaled by the city's health and height; walls add +50 % to
-  defence.
+- **Cities:** defence 4, shooting 3, both scaled by the city's health and height. A wall facing the
+  attacker adds +50 % to defence; each Tower facing the target adds +1 to shooting (at most +2).
+- **Sides.** The side of a city something is on is the nearest of the six directions by angle. A tile
+  exactly between two sides is on both, so a wall or tower on either counts.
 
 | Unit     | Cost | Speed | Attack | Defence | Special                                   |
 |----------|------|-------|--------|---------|-------------------------------------------|
@@ -141,49 +148,82 @@ sides take damage; shots only hurt the target. Units have 10 hp, cities 20.
 | Archer   | 25   | 2     | 2      | 2       | shoots 4 at range 2                       |
 | Rider    | 30   | 3     | 5      | 3       | fastest                                   |
 | Settler  | 30   | 2     | 0      | 1       | founds a city; costs the city one citizen |
-| Walls    | 30   |       |        |         | +50 % defence for the city and garrison   |
 
-## 7. Tick 8: end of turn, in order
+## 7. Inside the city
+
+A city is a small board of 19 plots: the **square** (plot 0, never built on), six **inner** plots
+(1..6) and twelve **outer** plots (7..18). Plot `1 + d` is the inner plot in direction `d` (0 = east,
+counter-clockwise in `AXIAL_DIRS` order), plot `7 + 2d` the outer corner facing direction `d`, and plot
+`8 + 2d` the outer side facing directions `d` and `d + 1`. An outer plot **faces** the city's real
+neighbour tiles in those directions.
+
+| Building | Cost | Plot | Worker | Gives |
+|---|---|---|---|---|
+| House | 15 | any | no | room for 2 more citizens |
+| Farm | 20 | outer, facing grass or plains | yes | 2 food + 1 per faced grass or plains |
+| Sawmill | 20 | outer, facing forest or hills | yes | 2 production + 1 per faced forest or hills |
+| Harbor | 25 | outer, facing water | yes | 2 food + 1 per faced water tile |
+| Workshop | 30 | inner | yes | 2 production + 1 per neighbouring Workshop or Sawmill |
+| Market | 35 | inner | yes | 2 food + 1 per neighbouring House (at most 3), and 1 production |
+| Barracks | 30 | inner | no | units cost 25 % less (rounded) |
+| Temple | 40 | inner | yes | growth needs 25 % less food; extra score |
+| Tower | 25 | outer | no | +1 city range and +1 city shooting on the sides it faces |
+| Wall | 20 | outer | no | +50 % defence against attacks from the sides it faces |
+
+- **Output.** The square makes 2 food and 4 production. Every citizen works in one building that needs
+  a worker; a citizen without a job makes 1 food. Buildings that need a worker produce nothing
+  without one.
+- **Focus** decides who works where when there are more jobs than citizens: **Growth** values food
+  twice (and the Temple), **Production** values production twice, **Balance** values both alike.
+  Ties go to more food (to more production under Production).
+- **Housing:** 2 citizens, +2 per House. A city never grows beyond it.
+- **Construction.** A building order is paid with the city's production like a unit, one item at a
+  time; the stored production carries over between items. When it completes the building stands on
+  its plot (`built`) and the city's order is cleared. If the plot no longer takes it, the order is
+  cleared with `buildFailed` and the production stays.
+- **Starting cities.** Every city starts with a House on the inner plot facing the middle of the map.
+  A capital also starts with a Farm on its best farm plot (or else a Sawmill, or else a Harbor).
+
+## 8. Tick 8: end of turn, in order
 
 1. **Founding.** A Settler with `found` set and an empty path founds a city on its tile. It fails
    (`foundFailed`, flag dropped) if any city is within 2 tiles (`tooClose`), or if another Settler
    founds within 2 tiles this turn: then **both** fail (`conflict`). A new city has 1 citizen.
 2. **Cities**, oldest first:
-   - **Tiles.** Every tile within 2 of a city belongs to the nearest city (ties: the older city;
-     between one player's own cities, the lower id). A tile equally near to two players' cities of
-     the same age is a border tile that nobody works. A city works its centre plus its `pop` best own tiles (most food + production,
-     ties to more food), never a tile with an enemy unit on it. The centre yields its terrain
-     plus 1 food and 2 production.
+   - **Output** (section 7) is computed with the city's current citizens and buildings.
    - **Production** is added to the store. If the store covers the build, it completes (one item per
-     turn) and the rest carries over; unit builds repeat, walls do not. A new unit appears on the
-     city tile, or on the free passable neighbour nearest the middle of the map (ties: the
-     counter-clockwise one as seen from the city). With no free tile, or a Settler from a city of
-     1, the build waits. A Settler costs the city one citizen.
-   - **Food:** each citizen eats 2. The store never drops below 0. The city grows when it holds
-     `10 + 5 x pop + pop²` food (16, 24, 34, 46, 60, ...); the rest carries over.
+     turn) and the rest carries over. A unit build reports `built` and then `spawn`: the unit appears
+     on the city tile, or on the free passable neighbour nearest the middle of the map (ties: the
+     counter-clockwise one as seen from the city). With no free tile, or a Settler from a city of 1,
+     the unit waits. A Settler costs the city one citizen. A finished building takes effect next turn.
+   - **Food:** each citizen eats 1. The store never drops below 0. The city grows when it holds
+     `8 + 4 x pop` food (12, 16, 20, 24, ...; 25 % less with a staffed Temple) and has room; the rest
+     carries over. A city at its housing keeps at most that much food.
 3. **Healing.** Units that took no damage this turn heal 1 hp, or 3 hp inside their own city.
 4. **City repair.** A city heals 3 hp, unless it or its garrison took damage this turn (a siege).
 5. **Elimination.** A player with no cities is out; their remaining units are removed (`death`).
 6. **Victory.** The last player with cities wins. After the last turn (60 by default) the best
-   score wins: 10 per city + 3 per citizen + 1 per unit. A tie is a draw.
+   score wins: 10 per city + 3 per citizen + 1 per building (+3 more per Temple) + 1 per unit. A tie
+   is a draw.
 
-## 8. Fairness
+## 9. Fairness
 
-Two-player maps are point-symmetric, seat 1 starts with the mirror image of seat 0's units, and the
-seed (not tile order) decides which half of the map each seat gets. The rules contain no
-direction-dependent tie-breaks, so a mirrored position resolves to the mirrored result (tested in
-`test/game.test.ts`). The remaining tie-breaks use ids: between one player's own pieces, or when a
-unit picks among equally weak enemies to attack or shoot. Maps for three or four players cannot be
-symmetric: the generator picks the starts that are best for the worst-off seat (share of the land
-plus site quality, at least 6 apart) and then shuffles the seats.
+Two-player maps are point-symmetric, seat 1 starts with the mirror image of seat 0's units and
+capital, and the seed (not tile order) decides which half of the map each seat gets. The rules contain
+no direction-dependent tie-breaks, so a mirrored position resolves to the mirrored result (tested in
+`test/game.test.ts`, which also turns every city interior by three sides). The remaining tie-breaks
+use ids: between one player's own pieces, or when a unit picks among equally weak enemies to attack
+or shoot. Maps for three or four players cannot be symmetric: the generator picks the starts that are
+best for the worst-off seat (share of the land plus site quality, at least 6 apart) and then shuffles
+the seats.
 
-## 9. What players see
+## 10. What players see
 
 `observe(state, player)` shows the whole board (no fog yet) but hides other players' plans: their
-units' paths, founding flags and volley targets, and their cities' builds and stores. Stances are
-visible.
+units' paths, founding flags and volley targets, and their cities' construction and stores. Stances,
+buildings and city focus are visible.
 
-## 10. Events (for replay)
+## 11. Events (for replay)
 
 | kind | tick | meaning |
 |---|---|---|
@@ -195,7 +235,9 @@ visible.
 | `death` | 1-8 | a unit died (8: its player was eliminated) |
 | `halt` | 1-6 | `contact` (Cautious stop), `engaged` (attacked), `blocked` (end of tick 6) |
 | `found`, `foundFailed` | 8 | founding |
-| `spawn`, `built`, `grow` | 8 | production (`built` is walls) and population; `grow` also reports shrinking (Settler built, or a capture at ticks 1-6) |
+| `built` | 8 | a construction finished: `item` is the unit type, or `{ building, plot }` for a building now standing |
+| `buildFailed` | 8 | a building no longer fits its plot (`item`, `reason`); the production stays |
+| `spawn`, `grow` | 8 | a new unit (after its `built`) and population; `grow` also reports shrinking (Settler built, or a capture at ticks 1-6) |
 | `heal` | 8 | a unit healed (new hp) |
 | `eliminated`, `victory` | 8 | end of a player, end of the game |
 

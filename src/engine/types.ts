@@ -57,7 +57,28 @@ export interface Unit {
   target: TileId | null
 }
 
-export type BuildItem = UnitType | 'walls'
+// ---- The city seen from inside (SPEC.md §5b; layout, buildings and output in city.ts) ----
+
+export type BuildingType =
+  | 'house' | 'farm' | 'sawmill' | 'workshop' | 'market' | 'harbor' | 'barracks' | 'temple' | 'tower' | 'wall'
+
+/** Which buildings get workers first when a city has fewer citizens than jobs. */
+export type CityFocus = 'growth' | 'production' | 'balance'
+
+export interface CityInterior {
+  /** One entry per plot (19: 0 the square, 1..6 inner, 7..18 outer); plot 0 is always null. */
+  plots: (BuildingType | null)[]
+  focus: CityFocus
+}
+
+/** Build `building` on `plot` of the city. */
+export interface BuildingOrder {
+  building: BuildingType
+  plot: number
+}
+
+/** What a city works on: a unit (repeats until changed) or one building on one plot. */
+export type BuildItem = UnitType | BuildingOrder
 
 export interface City {
   id: CityId
@@ -68,10 +89,12 @@ export interface City {
   food: number // stored food toward next growth
   prod: number // stored production toward the current build
   hp: number
+  /** @deprecated derived: true when any wall stands in `interior` (kept in sync by the engine). */
   walls: boolean
   build: BuildItem | null
   capital: boolean
   founded: number // turn
+  interior: CityInterior
 }
 
 export interface Player {
@@ -111,6 +134,8 @@ export interface UnitOrder {
 export interface PlayerOrders {
   units: Record<UnitId, UnitOrder>
   cities: Record<CityId, BuildItem | null>
+  /** City focus changes (cities without an entry keep theirs). */
+  focus?: Record<CityId, CityFocus>
 }
 
 /** Where something sits in the turn: ticks 1..6 are the simultaneous resolution, 7 = end-of-turn
@@ -133,7 +158,10 @@ export type GameEvent =
   | { t: Tick; kind: 'found'; city: City; unit: UnitId }
   | { t: Tick; kind: 'foundFailed'; unit: UnitId; reason: string }
   | { t: Tick; kind: 'spawn'; unit: Unit; city: CityId }
+  /** A construction finished: a unit (followed by its 'spawn') or a building now standing on its plot. */
   | { t: Tick; kind: 'built'; city: CityId; item: BuildItem }
+  /** A building could not be placed when it was finished; the production stays in the city. */
+  | { t: Tick; kind: 'buildFailed'; city: CityId; item: BuildingOrder; reason: string }
   | { t: Tick; kind: 'grow'; city: CityId; pop: number }
   | { t: Tick; kind: 'heal'; unit: UnitId; hp: number }
   | { t: Tick; kind: 'eliminated'; player: PlayerId }

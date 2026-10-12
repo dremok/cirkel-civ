@@ -1,7 +1,8 @@
 // World sandbox: /sandbox/world.html?seed=aurora&seats=2
 // Extra params: size=small|medium|large, quality=low|medium|high|ultra, view=start|close|coast,
 // focus=<tile>, zoom=<wheel notches>, yaw=<px of right-drag>, tilt=<px>, sun=<azimuth deg>,
-// post=0|1 (force AO), intro=0 (no camera glide). Debug: world.__bench(n) -> ms per frame.
+// post=0|1 (force AO), intro=0 (no camera glide), home=start (frame the first start area),
+// hud=1 (a mock phone HUD with view insets). Debug: world.__bench(n) -> ms per frame.
 import * as THREE from 'three'
 import { generateMap } from '../../engine/mapgen.ts'
 import type { WorldQuality } from '../render/api.ts'
@@ -19,6 +20,15 @@ const world = createWorld(document.getElementById('app')!, map, {
 })
 addEventListener('resize', () => world.resize())
 Object.assign(window as unknown as Record<string, unknown>, { world, map, THREE })
+
+if (q.get('hud') === '1') {
+  // A stand-in for the game's HUD: a top bar and a bottom panel covering 45 % of the screen.
+  const bar = (css: string) => Object.assign(document.body.appendChild(document.createElement('div')).style, { cssText: `position:fixed;left:0;right:0;background:rgba(247,242,232,.82);z-index:9;${css}` })
+  bar('top:0;height:70px')
+  bar('bottom:0;height:45%')
+  world.setViewInsets?.({ top: 70, bottom: innerHeight * 0.45, left: 0, right: 0 })
+}
+if (q.get('home') === 'start') world.home?.(false, { around: map.starts[0] })
 
 const view = q.get('view')
 if (view === 'close' || view === 'start') world.focus(map.starts[0], false)

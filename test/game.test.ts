@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import { botOrders, randomOrders } from '../src/engine/bot.ts'
-import { createGame } from '../src/engine/game.ts'
+import { createGame, rotateInterior, rotatePlot } from '../src/engine/game.ts'
 import { mirror } from '../src/engine/mapgen.ts'
 import { observe } from '../src/engine/observe.ts'
 import { resolveTurn } from '../src/engine/rules.ts'
-import type { GameState, PlayerId, PlayerOrders } from '../src/engine/types.ts'
+import type { BuildItem, GameState, PlayerId, PlayerOrders } from '../src/engine/types.ts'
 
 type Policy = (s: GameState, p: PlayerId, seed: number) => PlayerOrders
 const players = (n: number) => Array.from({ length: n }, (_, i) => ({ name: `P${i}`, kind: 'bot' as const }))
@@ -50,16 +50,22 @@ describe('whole games', () => {
   it('rules are fair on point-symmetric maps: a mirrored position resolves to the mirrored result', () => {
     let s = createGame({ seed: 'mirror', players: players(2) })
     const M = (t: number) => mirror(t, s.map.width, s.map.height)
+    // A 180° turn: tiles mirror, and every plot inside a city turns by three sides.
+    const flipBuild = (b: BuildItem | null): BuildItem | null => (b && typeof b === 'object' ? { ...b, plot: rotatePlot(b.plot, 3) } : b)
     const flip = (st: GameState): GameState => ({
       ...st,
       units: st.units.map((u) => ({ ...u, tile: M(u.tile), path: u.path.map(M), target: u.target === null ? null : M(u.target) })),
-      cities: st.cities.map((c) => ({ ...c, tile: M(c.tile) })),
+      cities: st.cities.map((c) => ({ ...c, tile: M(c.tile), build: flipBuild(c.build), interior: rotateInterior(c.interior, 3) })),
     })
     const flipOrders = (o: Record<number, PlayerOrders>) =>
       Object.fromEntries(
         Object.entries(o).map(([p, po]) => [
           p,
-          { cities: po.cities, units: Object.fromEntries(Object.entries(po.units).map(([id, uo]) => [id, { ...uo, path: uo.path.map(M), target: uo.target == null ? uo.target : M(uo.target) }])) },
+          {
+            ...po,
+            cities: Object.fromEntries(Object.entries(po.cities).map(([id, b]) => [id, flipBuild(b)])),
+            units: Object.fromEntries(Object.entries(po.units).map(([id, uo]) => [id, { ...uo, path: uo.path.map(M), target: uo.target == null ? uo.target : M(uo.target) }])),
+          },
         ]),
       )
     for (let turn = 0; turn < 40 && s.winner === null; turn++) {

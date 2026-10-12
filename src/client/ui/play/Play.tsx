@@ -1,28 +1,34 @@
 // The play screen: full-bleed 3D view, HUD on top, panels and actions in the thumb zone.
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
-import type { BuildItem, GameEvent, GameState, Stance, TileId, Unit } from '../../../engine/types.ts'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { audio, type ReplayAudio } from '../../audio/index.ts'
+import { buildCost } from '../../../engine/index.ts'
+import type { BuildingOrder, BuildItem, City, CityFocus, CityId, GameEvent, GameState, Stance, TileId, Unit } from '../../../engine/types.ts'
+import type { CityConstruction } from '../../city/api.ts'
 import type { GameView, Selection, ViewHandlers } from '../../render/api.ts'
 import { createGameView } from '../../render/index.ts'
 import { PLAYERS } from '../../render/palette.ts'
 import { connection } from '../../net/connection.ts'
 import { errorText } from '../../net/errors.ts'
 import type { GameSession, GameSnapshot } from '../../net/session.ts'
-import { getFlag, getName, getSeenTurn, setFlag, setSeatToken, setSeenTurn } from '../../net/storage.ts'
+import { getFlag, getName, getQuality, getSeenTurn, setFlag, setQuality, setSeatToken, setSeenTurn } from '../../net/storage.ts'
 import { HelpSheet } from '../HelpSheet.tsx'
 import { gameHash, gameUrl, go } from '../route.ts'
 import { shareLink } from '../share.ts'
 import { turnsWord, unitNoun } from '../strings.ts'
 import { toast } from '../toast.tsx'
-import { openCity } from './cityHook.ts'
+import { openCity, setCityOpener } from './cityHook.ts'
 import { cityEconomy } from './economy.ts'
 import { ActionBar, TopBar, type Phase } from './Hud.tsx'
 import { describeTurn, type LogLine } from './log.ts'
 import { EndScreen, MenuSheet, ReplayPanel, ScoreSheet } from './Overlays.tsx'
 import { CityPanel, TilePanel, UnitPanel, type UnitActions } from './Panels.tsx'
 import {
-  buildPlans, cityAt, emptyDraft, isEnemyAt, isIdle, myUnits, nextUnit, planSteps, safeFindPath, safeReachable, unitAt, unitOrder,
-  withCityBuild, withUnitOrder, type Draft,
+  buildPlans, cityAt, cityBuild, cityFocus, emptyDraft, isEnemyAt, isIdle, myUnits, nextUnit, planSteps, safeFindPath, safeReachable, unitAt, unitOrder,
+  withCityBuild, withCityFocus, withUnitOrder, type Draft,
 } from './planning.ts'
+
+// The city diorama has its own renderer and models: load it only when someone goes into a city.
+const CityScreen = lazy(() => import('../../city/index.ts').then((m) => ({ default: m.CityScreen })))
 
 type Sel = { kind: 'unit'; id: number } | { kind: 'city'; id: number } | { kind: 'tile'; tile: TileId } | null
 
@@ -38,7 +44,11 @@ interface Replay {
 
 const NO_SELECTION: Selection = { unit: null, city: null, reachable: [], preview: null, hover: null }
 const SEND_DEBOUNCE_MS = 450
+/** Seconds per tick in the replay; the sounds are scheduled on the same clock. */
+const TICK_SECONDS = 0.5
 const DRAG_PX = 8
+/** Matches the CSS breakpoint where the panel moves to the bottom-left corner. */
+const WIDE_PX = 900
 
 export function Play({ session, snap }: { session: GameSession; snap: GameSnapshot }) {
   const msg = snap.view!
@@ -73,6 +83,26 @@ export function Play({ session, snap }: { session: GameSession; snap: GameSnapsh
   const [banner, setBanner] = useState<{ turn: number; key: number } | null>(null)
   const showBanner = useCallback((turn: number) => setBanner({ turn, key: Date.now() }), [])
   const [optimisticReady, setOptimisticReady] = useState<boolean | null>(null)
+  const [cityView, setCityView] = useState<CityId | null>(null)
+  useEffect(
+    () =>
+      setCityOpener((id) => {
+        audio.ui('page')
+        setCityView(id)
+      }),
+    [],
+  )
+
+  // Music and ambience: the world outside, the town inside a city. Nothing sounds before the
+  // player's first tap or key (the audio module waits for it) and hidden tabs stay silent.
+  const inCity = cityView !== null
+  useEffect(() => {
+    audio.music(inCity ? 'city' : 'game')
+    audio.ambience(inCity ? 'town' : 'world')
+  }, [inCity])
+  const replaySound = useRef<ReplayAudio | null>(null)
+  const stung = useRef(false)
+  useEffect(() => () => replaySound.current?.stop(), [])
 
   // ------------------------------------------------------------------ derived
 
@@ -109,6 +139,8 @@ export function Play({ session, snap }: { session: GameSession; snap: GameSnapsh
       return
     }
     viewRef.current = view
+    const q = getQuality()
+    if (q !== 'auto') view.world.setQuality?.(q)
     const ro = new ResizeObserver(() => view.resize())
     ro.observe(host)
     // Tell taps from drags, and touch from mouse, whatever events the renderer listens to.
@@ -159,18 +191,37 @@ export function Play({ session, snap }: { session: GameSession; snap: GameSnapsh
     view.setPlans([])
     view.setSelection(NO_SELECTION)
     view.setState(prev, latest.current.you)
+    replaySound.current?.stop()
+    const you = latest.current.you
+    const world = view.world
+    const sound = audio.onEvents(events, TICK_SECONDS, {
+      me: you,
+      prev,
+      pan: (t) => world.tileTop(t).clone().project(world.camera).x,
+    })
+    replaySound.current = sound
+    // The replay's own sting covers the end of the game when it is in this turn.
+    if (events.some((e) => e.kind === 'victory' || (e.kind === 'eliminated' && e.player === you))) stung.current = true
     const done = () => {
       if (token !== replayToken.current) return
       playingRef.current = false
       viewRef.current?.setState(latest.current.state, latest.current.you)
       setReplay((r) => r && { ...r, playing: false, tick: null })
       setSeenTurn(session.gameId, prev.turn)
-      if (latest.current.state.winner === null && latest.current.state.turn > prev.turn) showBanner(latest.current.state.turn)
+      if (latest.current.state.winner === null && latest.current.state.turn > prev.turn) {
+        showBanner(latest.current.state.turn)
+        audio.ui('turn')
+        // Something worth hearing about in the log (a city taken, founded, a player out).
+        if (describeTurn(prev, events, next, latest.current.you).some((l) => l.important)) audio.ui('notify', { delay: 0.6 })
+      }
     }
     view
       .playEvents(prev, events, next, {
+        speed: TICK_SECONDS,
         onTick: (t) => {
-          if (token === replayToken.current) setReplay((r) => r && { ...r, tick: t })
+          if (token !== replayToken.current) return
+          sound.tick(t)
+          setReplay((r) => r && { ...r, tick: t })
         },
       })
       .then(done, (e) => {
@@ -205,6 +256,11 @@ export function Play({ session, snap }: { session: GameSession; snap: GameSnapsh
         : m.state.turn > before
     if (m.previous && fresh) startReplay(m.previous, m.events, m.state)
     else if (!playingRef.current) view.setState(m.state, m.you)
+    // Opening shot on phones: come in on your capital, close enough to play.
+    if (before === null && !fresh && m.you !== null && matchMedia('(pointer: coarse)').matches) {
+      const home = m.state.cities.find((c) => c.owner === m.you && c.capital) ?? m.state.cities.find((c) => c.owner === m.you)
+      if (home) view.world.focus(home.tile, true, { zoom: 'unit' })
+    }
     // A new turn: start a fresh draft (or the one the server kept for us).
     if (draftTurn.current !== m.state.turn || before === null) {
       draftTurn.current = m.state.turn
@@ -257,30 +313,43 @@ export function Play({ session, snap }: { session: GameSession; snap: GameSnapsh
     })
   }, [selUnit?.id, selCity?.id, reachable, preview, hover, pending, sel, playing, viewEpoch])
 
-  // Keep the selection in the part of the map that the HUD does not cover.
+  // Keep the selection in the part of the map that the HUD does not cover. The insets are
+  // stable: the world re-centres instantly on a change, so following every panel open/close
+  // would make the map jump under the player's finger. Phones reserve the lower part of the
+  // screen for the panel; wide screens only lose the top bar and the action bar.
   const bottomRef = useRef<HTMLDivElement>(null)
   const topRef = useRef<HTMLDivElement>(null)
+  const justFocused = useRef(false)
   useEffect(() => {
-    const view = viewRef.current
-    const world = view?.world as (GameView['world'] & { setViewInsets?: (i: { top: number; bottom: number; left: number; right: number }) => void }) | undefined
+    const world = viewRef.current?.world
     if (!world?.setViewInsets || !bottomRef.current || !topRef.current) return
     const push = () => {
-      const h = innerHeight
-      const b = bottomRef.current!.getBoundingClientRect()
-      const t = topRef.current!.getBoundingClientRect()
-      world.setViewInsets!({ top: t.bottom, bottom: Math.max(0, h - b.top), left: 0, right: 0 })
+      const top = topRef.current?.getBoundingClientRect().bottom ?? 0
+      const bar = (bottomRef.current?.lastElementChild as HTMLElement | null)?.getBoundingClientRect()
+      const barCover = bar ? innerHeight - bar.top : 0
+      const reserve = innerWidth < WIDE_PX ? Math.min(380, Math.max(260, innerHeight * 0.36)) : 0
+      world.setViewInsets!({ top, bottom: barCover + reserve, left: 0, right: 0 })
     }
     const ro = new ResizeObserver(push)
-    ro.observe(bottomRef.current)
     ro.observe(topRef.current)
+    if (bottomRef.current.lastElementChild) ro.observe(bottomRef.current.lastElementChild)
+    addEventListener('resize', push)
     push()
-    return () => ro.disconnect()
+    return () => {
+      ro.disconnect()
+      removeEventListener('resize', push)
+    }
   }, [viewEpoch])
 
   const selTile = selUnit?.tile ?? selCity?.tile ?? (sel?.kind === 'tile' ? sel.tile : null)
   useEffect(() => {
     const view = viewRef.current
     if (!view || selTile === null) return
+    // An explicit focus (Next unit) is already moving the camera.
+    if (justFocused.current) {
+      justFocused.current = false
+      return
+    }
     const id = requestAnimationFrame(() => {
       const b = bottomRef.current?.getBoundingClientRect()
       const t = topRef.current?.getBoundingClientRect()
@@ -339,6 +408,7 @@ export function Play({ session, snap }: { session: GameSession; snap: GameSnapsh
     clearTimeout(sendTimer.current)
     unsent.current = null
     session.sendOrders(state.turn, draftRef.current, true)
+    audio.ui('confirm')
     setOptimisticReady(true)
     setSel(null)
     setPending(null)
@@ -348,10 +418,12 @@ export function Play({ session, snap }: { session: GameSession; snap: GameSnapsh
     clearTimeout(sendTimer.current)
     unsent.current = null
     session.sendOrders(state.turn, draftRef.current, false)
+    audio.ui('cancel')
     setOptimisticReady(false)
   }, [session, state.turn])
 
   const selectUnit = useCallback((u: Unit | null, focus = false) => {
+    if (u) audio.ui('select')
     setPending(null)
     setSel(u ? { kind: 'unit', id: u.id } : null)
     if (u && focus) viewRef.current?.focusTile(u.tile, true)
@@ -361,28 +433,43 @@ export function Play({ session, snap }: { session: GameSession; snap: GameSnapsh
   const goNext = useCallback(() => {
     if (me === null) return
     const n = nextUnit(state, draftRef.current, me, mySelUnit?.id ?? null)
-    // The camera follows only if the unit is hidden behind the HUD or off screen.
-    if (n) selectUnit(n)
+    if (!n) return
+    // On phones, come in close enough to tap the unit. With a mouse the camera only follows if
+    // the unit is hidden behind the HUD or off screen.
+    if (pointer.current.type !== 'mouse') {
+      justFocused.current = true
+      viewRef.current?.world.focus(n.tile, true, { zoom: 'unit' })
+    }
+    selectUnit(n)
   }, [me, state, mySelUnit, selectUnit])
 
   const unitActions: UnitActions | null = mySelUnit
     ? {
         setStance: (s: Stance) => {
+          audio.ui('tap')
           const patch = s === 'hold' ? { stance: s, path: [], found: false } : { stance: s }
           setDraft(withUnitOrder(draftRef.current, mySelUnit, patch))
         },
         toggleFound: () => {
           const o = unitOrder(draftRef.current, mySelUnit)
+          audio.ui(o.found ? 'cancel' : 'order')
           setDraft(withUnitOrder(draftRef.current, mySelUnit, { found: !o.found, stance: o.stance === 'hold' ? 'cautious' : o.stance }))
         },
-        clear: () => setDraft(withUnitOrder(draftRef.current, mySelUnit, { path: [], found: false, target: null })),
-        clearTarget: () => setDraft(withUnitOrder(draftRef.current, mySelUnit, { target: null })),
+        clear: () => {
+          audio.ui('cancel')
+          setDraft(withUnitOrder(draftRef.current, mySelUnit, { path: [], found: false, target: null }))
+        },
+        clearTarget: () => {
+          audio.ui('cancel')
+          setDraft(withUnitOrder(draftRef.current, mySelUnit, { target: null }))
+        },
       }
     : null
 
   const setBuild = useCallback(
     (item: BuildItem) => {
       if (!selCity) return
+      audio.ui('order')
       setDraft(withCityBuild(draftRef.current, selCity, item))
     },
     [selCity, setDraft],
@@ -430,6 +517,7 @@ export function Play({ session, snap }: { session: GameSession; snap: GameSnapsh
       const enemyHere = isEnemyAt(state, me, tile)
       if (mySelUnit.type === 'archer' && enemyHere) {
         setPending(null)
+        audio.ui('order')
         setDraft(withUnitOrder(draftRef.current, mySelUnit, { target: tile }))
         return
       }
@@ -440,9 +528,11 @@ export function Play({ session, snap }: { session: GameSession; snap: GameSnapsh
         return
       }
       if (touch && pending !== tile) {
+        audio.ui('tap')
         setPending(tile)
         return
       }
+      audio.ui('order')
       const o = unitOrder(draftRef.current, mySelUnit)
       setDraft(
         withUnitOrder(draftRef.current, mySelUnit, {
@@ -457,10 +547,14 @@ export function Play({ session, snap }: { session: GameSession; snap: GameSnapsh
 
     setPending(null)
     if (u) {
-      if (sel?.kind === 'unit' && sel.id === u.id) setSel(c ? { kind: 'city', id: c.id } : null)
-      else selectUnit(u)
+      if (sel?.kind === 'unit' && sel.id === u.id) {
+        if (c) audio.ui('select')
+        setSel(c ? { kind: 'city', id: c.id } : null)
+      } else selectUnit(u)
     } else if (c) {
-      setSel(sel?.kind === 'city' && sel.id === c.id ? null : { kind: 'city', id: c.id })
+      const closing = sel?.kind === 'city' && sel.id === c.id
+      if (!closing) audio.ui('select')
+      setSel(closing ? null : { kind: 'city', id: c.id })
     } else {
       setSel(sel?.kind === 'tile' && sel.tile === tile ? null : sel ? null : { kind: 'tile', tile })
     }
@@ -484,6 +578,8 @@ export function Play({ session, snap }: { session: GameSession; snap: GameSnapsh
       state, draft, sel, me, phase, reachable, preview, openSheet: setSheet, setDraft, findPath: safeFindPath, ready: pressReady,
       replay,
       view: viewRef.current,
+      selectCity: (id: number) => setSel({ kind: 'city', id }),
+      audio,
       tileScreen(tile: TileId) {
         const v = viewRef.current
         if (!v) return null
@@ -500,7 +596,7 @@ export function Play({ session, snap }: { session: GameSession; snap: GameSnapsh
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
-      if (sheet) return
+      if (sheet || cityView !== null) return
       if (e.metaKey || e.ctrlKey || e.altKey) return
       if (e.key === 'Enter') {
         if (t?.tagName === 'BUTTON') return
@@ -519,12 +615,17 @@ export function Play({ session, snap }: { session: GameSession; snap: GameSnapsh
         unitActions.setStance((['cautious', 'aggressive', 'hold'] as const)[Number(e.key) - 1])
       } else if (e.key === ' ' && replay?.playing) {
         e.preventDefault()
-        viewRef.current?.skipPlayback()
+        skip()
       }
     }
     addEventListener('keydown', onKey)
     return () => removeEventListener('keydown', onKey)
   })
+
+  const skip = () => {
+    replaySound.current?.stop()
+    viewRef.current?.skipPlayback()
+  }
 
   // The end screen opens once the final replay has played.
   const endShown = useRef(false)
@@ -532,6 +633,11 @@ export function Play({ session, snap }: { session: GameSession; snap: GameSnapsh
     if (finished && !playing && !endShown.current) {
       endShown.current = true
       setSheet('end')
+      // Opened on a finished game (no replay of the last turn): play the closing phrase here.
+      if (!stung.current && me !== null && state.winner !== 'draw') {
+        stung.current = true
+        audio.sting(state.winner === me ? 'victory' : 'defeat', 0.3)
+      }
     }
   }, [finished, playing])
 
@@ -585,7 +691,7 @@ export function Play({ session, snap }: { session: GameSession; snap: GameSnapsh
         me={me}
         city={selCity}
         editable={editable}
-        economy={cityEconomy(state, selCity)}
+        economy={cityEconomy(state, selCity, cityFocus(draft, selCity))}
         onBuild={setBuild}
         onEnter={() => openCity(selCity.id)}
         onClose={() => setSel(null)}
@@ -593,6 +699,22 @@ export function Play({ session, snap }: { session: GameSession; snap: GameSnapsh
     )
   } else if (sel?.kind === 'tile') {
     panel = <TilePanel state={state} tile={sel.tile} onClose={() => setSel(null)} />
+  }
+
+  const viewCity = cityView !== null ? state.cities.find((c) => c.id === cityView) ?? null : null
+  const construction = (c: City): CityConstruction => {
+    const b = cityBuild(draft, c)
+    if (!b) return null
+    const cost = buildCost(c, b)
+    return typeof b === 'string' ? { unit: b, progress: c.prod, cost } : { building: b.building, plot: b.plot, progress: c.prod, cost }
+  }
+  const cityEdit = (fn: (d: Draft) => Draft, sound: 'order' | 'cancel' | 'tap') => {
+    if (!editable) {
+      toast(phase === 'waiting' ? 'You are ready. Press Edit orders to change your plans.' : 'You cannot change this city right now.')
+      return
+    }
+    audio.ui(sound)
+    setDraft(fn(draftRef.current))
   }
 
   const rematch = () => {
@@ -615,7 +737,7 @@ export function Play({ session, snap }: { session: GameSession; snap: GameSnapsh
 
   return (
     <div
-      className={`play phase-${phase}`}
+      className={`play phase-${phase}${viewCity ? ' in-city' : ''}`}
       style={accent ? ({ '--accent': accent.base, '--accent-light': accent.light, '--accent-dark': accent.dark } as CSSProperties) : undefined}
     >
       <div className="play-view" ref={hostRef} />
@@ -635,7 +757,10 @@ export function Play({ session, snap }: { session: GameSession; snap: GameSnapsh
         deadline={msg.deadline}
         tick={replay?.playing ? replay.tick : null}
         offline={snap.status !== 'open'}
-        onMenu={() => setSheet('menu')}
+        onMenu={() => {
+          audio.ui('tap')
+          setSheet('menu')
+        }}
         onPlayers={() => setSheet('scores')}
       />
 
@@ -656,7 +781,7 @@ export function Play({ session, snap }: { session: GameSession; snap: GameSnapsh
           onNext={goNext}
           onReady={pressReady}
           onUnready={unready}
-          onSkip={() => viewRef.current?.skipPlayback()}
+          onSkip={skip}
           onResults={() => setSheet('end')}
         />
       </div>
@@ -682,10 +807,35 @@ export function Play({ session, snap }: { session: GameSession; snap: GameSnapsh
             setSheet(null)
             if (msg.previous) startReplay(msg.previous, msg.events, msg.state)
           }}
+          quality={getQuality()}
+          activeQuality={viewRef.current?.world.quality ?? null}
+          canSetQuality={!!viewRef.current?.world.setQuality}
+          onQuality={(q) => {
+            setQuality(q)
+            viewRef.current?.world.setQuality?.(q)
+          }}
         />
       )}
       {sheet === 'scores' && <ScoreSheet state={state} me={me} onClose={() => setSheet(null)} />}
       {sheet === 'end' && <EndScreen state={state} me={me} onClose={() => setSheet(null)} onRematch={rematch} />}
+
+      {viewCity && (
+        <Suspense fallback={null}>
+          <CityScreen
+            state={state}
+            cityId={viewCity.id}
+            interior={{ ...viewCity.interior, focus: cityFocus(draft, viewCity) }}
+            me={me}
+            construction={construction(viewCity)}
+            onBuild={(order: BuildingOrder | null) => cityEdit((d) => withCityBuild(d, viewCity, order), order ? 'order' : 'cancel')}
+            onFocus={(f: CityFocus) => cityEdit((d) => withCityFocus(d, viewCity, f), 'tap')}
+            onClose={() => {
+              audio.ui('page')
+              setCityView(null)
+            }}
+          />
+        </Suspense>
+      )}
     </div>
   )
 }

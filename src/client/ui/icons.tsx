@@ -1,6 +1,6 @@
 // Thin-line icons drawn for the game: 24 px grid, 1.5 px stroke, round joins.
 import type { ReactNode, SVGProps } from 'react'
-import type { BuildItem, Stance } from '../../engine/types.ts'
+import type { BuildingType, BuildItem, Stance, UnitType } from '../../engine/types.ts'
 
 const PATHS = {
   spear: (
@@ -200,6 +200,45 @@ const PATHS = {
       <path d="M6 9.5v10h12v-10" />
     </>
   ),
+  saw: (
+    <>
+      <path d="M3.5 15.5 15 4l5.5 5.5L9 21Z" />
+      <path d="M7 12l1.5 1.5M10 9l1.5 1.5M13 6l1.5 1.5" />
+    </>
+  ),
+  market: (
+    <>
+      <path d="M4 9.5 5.5 4.5h13L20 9.5" />
+      <path d="M4 9.5c0 1.4 1 2.3 2.7 2.3s2.6-.9 2.6-2.3c0 1.4 1 2.3 2.7 2.3s2.7-.9 2.7-2.3c0 1.4.9 2.3 2.6 2.3S20 10.9 20 9.5Z" />
+      <path d="M5.5 11.5v8h13v-8M10 19.5v-4.5h4v4.5" />
+    </>
+  ),
+  anchor: (
+    <>
+      <circle cx="12" cy="5.5" r="2" />
+      <path d="M12 7.5v13M8.5 11h7" />
+      <path d="M4.5 14c.6 3.8 3.6 6.5 7.5 6.5s6.9-2.7 7.5-6.5M4.5 14l-1 1.5M4.5 14l1.7.6M19.5 14l1 1.5M19.5 14l-1.7.6" />
+    </>
+  ),
+  temple: (
+    <>
+      <path d="M3.5 9 12 4l8.5 5Z" />
+      <path d="M5 9v9M9.7 9v9M14.3 9v9M19 9v9" />
+      <path d="M3.5 20.5h17M4.5 18h15" />
+    </>
+  ),
+  sound: (
+    <>
+      <path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4Z" />
+      <path d="M15.5 9a4.2 4.2 0 0 1 0 6M18 6.5a7.8 7.8 0 0 1 0 11" />
+    </>
+  ),
+  soundOff: (
+    <>
+      <path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4Z" />
+      <path d="M16 9.5l5 5M21 9.5l-5 5" />
+    </>
+  ),
   plus: <path d="M12 5.5v13M5.5 12h13" />,
   minus: <path d="M5.5 12h13" />,
   arrowRight: (
@@ -244,13 +283,27 @@ export function Icon({ name, size = 20, className, ...rest }: { name: IconName; 
   )
 }
 
-export const BUILD_ICON: Record<BuildItem, IconName> = {
+export const UNIT_ICON: Record<UnitType, IconName> = {
   spear: 'spear',
   archer: 'archer',
   rider: 'rider',
   settler: 'settler',
-  walls: 'walls',
 }
+
+export const BUILDING_ICON: Record<BuildingType, IconName> = {
+  house: 'home',
+  farm: 'food',
+  sawmill: 'saw',
+  workshop: 'prod',
+  market: 'market',
+  harbor: 'anchor',
+  barracks: 'swords',
+  temple: 'temple',
+  tower: 'tower',
+  wall: 'walls',
+}
+
+export const buildIcon = (item: BuildItem): IconName => (typeof item === 'string' ? UNIT_ICON[item] : BUILDING_ICON[item.building])
 
 export const STANCE_ICON: Record<Stance, IconName> = {
   cautious: 'eye',

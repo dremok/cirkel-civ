@@ -1,4 +1,5 @@
 // "What happened": a short, readable account of a resolved turn.
+import { BUILDINGS } from '../../../engine/index.ts'
 import type { City, GameEvent, GameState, PlayerId, Target, TileId, Unit, UnitId } from '../../../engine/types.ts'
 import { possessive, unitNoun, withArticle } from '../strings.ts'
 import { nearestCity } from './planning.ts'
@@ -12,11 +13,13 @@ export interface LogLine {
   tone: 'good' | 'bad' | 'neutral'
   tile: TileId | null
   count?: number
+  /** Worth a notification sound: a city taken or founded, a player out, a plan that failed. */
+  important?: boolean
 }
 
 const FOUND_FAILED: Record<string, string> = {
   tooClose: 'too close to another city',
-  conflict: 'another settler tried to found too close at the same time',
+  conflict: 'another settler founded too close this turn',
 }
 
 export function describeTurn(prev: GameState, events: GameEvent[], next: GameState, me: PlayerId | null): LogLine[] {
@@ -64,8 +67,9 @@ export function describeTurn(prev: GameState, events: GameEvent[], next: GameSta
   const halted = new Set<UnitId>()
 
   const lines: LogLine[] = []
+  const IMPORTANT = new Set<GameEvent['kind']>(['capture', 'found', 'eliminated', 'foundFailed', 'buildFailed'])
   const add = (e: GameEvent, i: number, player: PlayerId | null, text: string, good: boolean | null, tile: TileId | null) =>
-    lines.push({ key: `${i}`, t: e.t, player, text, tone: tone(good), tile })
+    lines.push({ key: `${i}`, t: e.t, player, text, tone: tone(good), tile, important: IMPORTANT.has(e.kind) })
 
   events.forEach((e, i) => {
     switch (e.kind) {
@@ -124,10 +128,21 @@ export function describeTurn(prev: GameState, events: GameEvent[], next: GameSta
         return
       }
       case 'built': {
-        if (e.item !== 'walls') return
+        // Units announce themselves with 'spawn'; this is for buildings.
+        if (typeof e.item === 'string') return
         const c = after(e.city)
         if (!c) return
-        add(e, i, c.owner, `${c.name} built walls.`, mine(c.owner) ? true : null, c.tile)
+        const b = e.item.building
+        // Your own buildings, and anyone's defences (they change how a city fights).
+        if (c.owner !== me && b !== 'wall' && b !== 'tower') return
+        add(e, i, c.owner, `${c.name} built ${withArticle(BUILDINGS[b].name.toLowerCase())}.`, mine(c.owner) ? true : null, c.tile)
+        return
+      }
+      case 'buildFailed': {
+        const c = after(e.city)
+        if (!c || c.owner !== me) return
+        const why = e.reason ? ` ${e.reason.trim().replace(/([^.!?])$/, '$1.')}` : ''
+        add(e, i, me, `${c.name} could not place its ${BUILDINGS[e.item.building].name.toLowerCase()}.${why}`, false, c.tile)
         return
       }
       case 'grow': {

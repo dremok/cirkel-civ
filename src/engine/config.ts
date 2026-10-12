@@ -1,7 +1,8 @@
-import type { Biome, BuildItem, UnitType } from './types.ts'
+import type { Biome, UnitType } from './types.ts'
 
 export const TICKS_PER_TURN = 6
-/** Movement points needed to enter a flat tile. A unit gains `speed` points per tick. */
+/** Movement points needed to enter a flat tile. A unit gains `speed` points per tick: on flat ground
+ * a spearman takes 3 steps a turn, a rider 4. */
 export const FLAT_COST = 6
 export const CLIMB_COST_PER_LEVEL = 3
 /** Height difference above this is a cliff: impassable. */
@@ -11,7 +12,7 @@ export const WATER_LEVEL = 2 // heights below this are water
 export const UNIT_MAX_HP = 10
 export const CITY_MAX_HP = 20
 export const CITY_REGEN = 3
-export const CITY_RANGED = 3
+export const CITY_RANGED = 2
 export const CITY_RANGE = 2
 export const CITY_DEFENSE = 4
 export const MIN_CITY_DISTANCE = 3
@@ -34,14 +35,6 @@ export const UNITS: Record<UnitType, UnitStats> = {
   archer: { cost: 25, speed: 2, attack: 2, defense: 2, ranged: 4, range: 2 },
   rider: { cost: 30, speed: 3, attack: 5, defense: 3 },
   settler: { cost: 30, speed: 2, attack: 0, defense: 1, civilian: true },
-}
-
-export const BUILD_COST: Record<BuildItem, number> = {
-  spear: UNITS.spear.cost,
-  archer: UNITS.archer.cost,
-  rider: UNITS.rider.cost,
-  settler: UNITS.settler.cost,
-  walls: 30,
 }
 
 export const MODIFIERS = {

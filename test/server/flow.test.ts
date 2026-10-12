@@ -9,6 +9,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import WebSocket from 'ws'
 import { botOrders } from '../../src/engine/index.ts'
 import type { ClientMessage, ServerMessage } from '../../src/shared/protocol.ts'
+import { SCHEMA_VERSION } from '../../src/server/migrate.ts'
 import type { GameRecord } from '../../src/server/types.ts'
 
 const ROOT = resolve(import.meta.dirname, '../..')
@@ -366,7 +367,7 @@ describe('server flow', () => {
     // An abandoned lobby from four days ago is cleaned up on boot.
     const old = Date.now() - 4 * 24 * 3600_000
     const stale: GameRecord = {
-      v: 1, id: 'stale1', name: 'Gammal', phase: 'lobby', createdAt: old, updatedAt: old, host: 0,
+      schemaVersion: SCHEMA_VERSION, id: 'stale1', name: 'Gammal', phase: 'lobby', createdAt: old, updatedAt: old, host: 0,
       seats: [{ kind: 'human', name: 'X', tokenHash: null }, { kind: 'open', name: null, tokenHash: null }],
       turnSeconds: null, mapSize: null, seed: null, config: null, state: null, previous: null, events: [],
       orders: {}, ready: [false, false], deadline: null, log: [],

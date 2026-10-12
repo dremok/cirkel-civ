@@ -6,7 +6,8 @@ import * as THREE from 'three'
 import { Kit, type Model, box, cone, cyl, dome, flat, gableEnd, gableRoof, hipRoof, lathe, slab, sphere, torus } from './kit.ts'
 
 export const C = {
-  plaster: ['#F4ECDD', '#F1E2C4', '#EFD7A6', '#E9CB9E', '#EDD0C0', '#D9DEC6', '#D3DADB', '#E8DACA', '#F3DCCB'],
+  // cream, limewash, ochre, deep ochre, rose, blush, sky-washed white, sage-white, warm stone
+  plaster: ['#F4ECDD', '#F6F1E7', '#E9C88E', '#DDB273', '#EBC4B6', '#F1D6C8', '#E3EAEE', '#DCE3CF', '#E8DACA'],
   trim: '#F7F1E6',
   timber: '#7E5236',
   timberDark: '#5E3D29',
@@ -63,14 +64,15 @@ function win(k: Kit, x: number, y: number, z: number, rotY: number, w = 0.022, h
     k.glow(box(w, h, 0.004), C.glass, { p: [0, 0, 0.003] })
     k.add(box(0.003, h, 0.005), C.trim, { p: [0, 0, 0.004] })
     k.add(box(w + 0.014, 0.005, 0.01), C.trim, { p: [0, -h / 2 - 0.004, 0.004] })
-    if (shutters) for (const sx of [-1, 1]) k.team(box(w * 0.55, h + 0.004, 0.004), 0.78, { p: [sx * (w * 0.78 + 0.004), 0, 0.003] })
+    if (shutters) for (const sx of [-1, 1]) k.teamDark(box(w * 0.55, h + 0.004, 0.004), 1, { p: [sx * (w * 0.78 + 0.004), 0, 0.003] })
   })
 }
 
-function door(k: Kit, x: number, z: number, rotY: number, w = 0.034, h = 0.05, color = C.door) {
+function door(k: Kit, x: number, z: number, rotY: number, w = 0.034, h = 0.05, color: string | 'team' = C.door) {
   k.group({ p: [x, 0, z], r: [0, rotY, 0] }, () => {
     k.add(box(w + 0.01, h + 0.006, 0.004), C.trim, { p: [0, h / 2 + 0.014, 0.001] })
-    k.add(box(w, h, 0.006), color, { p: [0, h / 2 + 0.014, 0.003] })
+    if (color === 'team') k.teamDark(box(w, h, 0.006), 1, { p: [0, h / 2 + 0.014, 0.003] })
+    else k.add(box(w, h, 0.006), color, { p: [0, h / 2 + 0.014, 0.003] })
     k.add(box(w + 0.016, 0.008, 0.016), C.stoneDark, { p: [0, 0.006, 0.008] })
   })
 }
@@ -92,8 +94,8 @@ function chimney(k: Kit, x: number, z: number, top: number, base: number, color 
 function gabled(k: Kit, w: number, d: number, h: number, roofH: number, o: { over?: number; wallShade?: number } = {}) {
   k.wall(box(w, h, d), o.wallShade ?? 1, { p: [0, h / 2 + 0.012, 0] })
   for (const sx of [-1, 1]) k.wall(gableEnd(d, roofH, 0.004), o.wallShade ?? 1, { p: [sx * (w / 2 - 0.002), h + 0.012, 0] })
-  for (const g of gableRoof(w, d, roofH, 0.011, o.over ?? 0.016)) k.team(g, 1, { p: [0, h + 0.012, 0] })
-  k.team(box(w + 2 * (o.over ?? 0.016) + 0.004, 0.011, 0.012), 0.62, { p: [0, h + 0.012 + roofH + 0.006, 0] })
+  for (const g of gableRoof(w, d, roofH, 0.011, o.over ?? 0.016)) k.team(g, 1, { p: [0, h + 0.012, 0], mottle: 0.55 })
+  k.teamDark(box(w + 2 * (o.over ?? 0.016) + 0.004, 0.011, 0.012), 1, { p: [0, h + 0.012 + roofH + 0.006, 0] })
   // ivory barge boards along the gables
   for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
     const ang = Math.atan2(roofH, d / 2)
@@ -127,7 +129,7 @@ function cottage(k: Kit) {
   const w = 0.15, d = 0.115, h = 0.082, rh = 0.072
   footing(k, w, d)
   const top = gabled(k, w, d, h, rh)
-  door(k, -0.025, d / 2, 0)
+  door(k, -0.025, d / 2, 0, 0.034, 0.05, 'team')
   win(k, 0.032, 0.058, d / 2, 0, 0.024, 0.026, true)
   flowerBox(k, 0.032, 0.04, d / 2, 0, 1)
   win(k, -0.035, 0.058, -d / 2, Math.PI)
@@ -142,11 +144,11 @@ function thatched(k: Kit) {
   footing(k, w, d)
   k.wall(box(w, h, d), 1, { p: [0, h / 2 + 0.012, 0] })
   for (const sx of [-1, 1]) k.wall(gableEnd(d, rh, 0.004), 1, { p: [sx * (w / 2 - 0.002), h + 0.012, 0] })
-  for (const g of gableRoof(w, d, rh, 0.026, 0.024)) k.add(g, C.straw, { p: [0, h + 0.006, 0] })
+  for (const g of gableRoof(w, d, rh, 0.026, 0.024)) k.add(g, C.straw, { p: [0, h + 0.006, 0], mottle: 0.45 })
   k.add(new THREE.CylinderGeometry(0.018, 0.018, w + 0.05, 8), C.strawDark, { p: [0, h + 0.012 + rh + 0.01, 0], r: [0, 0, Math.PI / 2] })
   for (const sz of [-1, 1]) k.add(new THREE.CylinderGeometry(0.012, 0.012, w + 0.05, 8), C.strawDark, { p: [0, h + 0.002, sz * (d / 2 + 0.022)], r: [0, 0, Math.PI / 2] })
   k.add(box(0.034, 0.05, 0.006), C.door, { p: [-0.03, 0.039, d / 2 + 0.003] })
-  k.team(box(0.03, 0.044, 0.004), 0.85, { p: [-0.03, 0.039, d / 2 + 0.006] })
+  k.teamDark(box(0.03, 0.044, 0.004), 1, { p: [-0.03, 0.039, d / 2 + 0.006] })
   win(k, 0.035, 0.055, d / 2, 0, 0.024, 0.024, true)
   flowerBox(k, 0.035, 0.038, d / 2, 0, 4)
   win(k, 0, 0.055, -d / 2, Math.PI)
@@ -164,9 +166,9 @@ function townhouse(k: Kit) {
   k.wall(box(w2, h2, d2), 1, { p: [0, y2 + h2 / 2, 0] })
   timbering(k, w2, d2, y2, h2)
   for (const sx of [-1, 1]) k.wall(gableEnd(d2, rh, 0.004), 1, { p: [sx * (w2 / 2 - 0.002), y2 + h2, 0] })
-  for (const g of gableRoof(w2, d2, rh, 0.011, 0.016)) k.team(g, 1, { p: [0, y2 + h2, 0] })
-  k.team(box(w2 + 0.036, 0.011, 0.012), 0.62, { p: [0, y2 + h2 + rh + 0.006, 0] })
-  door(k, 0.0, d / 2, 0)
+  for (const g of gableRoof(w2, d2, rh, 0.011, 0.016)) k.team(g, 1, { p: [0, y2 + h2, 0], mottle: 0.55 })
+  k.teamDark(box(w2 + 0.036, 0.011, 0.012), 1, { p: [0, y2 + h2 + rh + 0.006, 0] })
+  door(k, 0.0, d / 2, 0, 0.034, 0.05, 'team')
   for (const sx of [-1, 1]) win(k, sx * 0.04, 0.055, d / 2, 0)
   for (const sx of [-1, 0, 1]) win(k, sx * 0.045, y2 + 0.04, d2 / 2, 0, 0.022, 0.026, sx === 0)
   for (const sx of [-1, 1]) win(k, sx * 0.04, y2 + 0.04, -d2 / 2, Math.PI)
@@ -196,11 +198,12 @@ function hiphouse(k: Kit) {
   const w = 0.14, d = 0.13, h = 0.095, rh = 0.08
   footing(k, w, d)
   k.wall(box(w, h, d), 1, { p: [0, h / 2 + 0.012, 0] })
-  k.team(hipRoof(w + 0.03, d + 0.03, rh, 0.012), 1, { p: [0, h + 0.012, 0] })
+  k.team(hipRoof(w + 0.03, d + 0.03, rh, 0.012), 1, { p: [0, h + 0.012, 0], mottle: 0.55 })
+  k.teamDark(box(0.016, 0.012, 0.016), 1, { p: [0, h + 0.012 + rh, 0] })
   for (const sz of [-1, 1]) k.add(box(w + 0.03, 0.006, 0.006), C.trim, { p: [0, h + 0.012, sz * (d / 2 + 0.015)] })
   door(k, 0, d / 2, 0)
   // a little porch roof over the door
-  k.team(box(0.06, 0.006, 0.03), 0.8, { p: [0, 0.076, d / 2 + 0.014], r: [0.35, 0, 0] })
+  k.teamDark(box(0.06, 0.006, 0.03), 1, { p: [0, 0.076, d / 2 + 0.014], r: [0.35, 0, 0] })
   for (const sx of [-1, 1]) win(k, sx * 0.042, 0.06, d / 2, 0, 0.022, 0.026, true)
   for (const sx of [-1, 1]) win(k, sx * 0.035, 0.06, -d / 2, Math.PI)
   for (const sx of [-1, 1]) win(k, sx * w / 2, 0.06, 0, sx * Math.PI / 2)
@@ -214,8 +217,8 @@ function tallhouse(k: Kit) {
   k.wall(box(w, h, d), 1, { p: [0, h / 2 + 0.012, 0] })
   k.group({ r: [0, Math.PI / 2, 0] }, () => {
     for (const sx of [-1, 1]) k.wall(gableEnd(w, rh, 0.004), 1, { p: [sx * (d / 2 - 0.002), h + 0.012, 0] })
-    for (const g of gableRoof(d, w, rh, 0.011, 0.014)) k.team(g, 1, { p: [0, h + 0.012, 0] })
-    k.team(box(d + 0.032, 0.011, 0.012), 0.62, { p: [0, h + 0.012 + rh + 0.006, 0] })
+    for (const g of gableRoof(d, w, rh, 0.011, 0.014)) k.team(g, 1, { p: [0, h + 0.012, 0], mottle: 0.55 })
+    k.teamDark(box(d + 0.032, 0.011, 0.012), 1, { p: [0, h + 0.012 + rh + 0.006, 0] })
   })
   k.add(box(0.01, 0.01, 0.03), C.timber, { p: [0, h + 0.05, d / 2 + 0.012] })
   door(k, -0.022, d / 2, 0)
@@ -351,8 +354,8 @@ function workshop(k: Kit) {
   footing(k, w, d)
   k.add(box(w, h, d), C.granite, { p: [0, h / 2 + 0.012, 0] })
   for (const sx of [-1, 1]) k.add(gableEnd(d, rh, 0.004), C.granite, { p: [sx * (w / 2 - 0.002), h + 0.012, 0] })
-  for (const g of gableRoof(w, d, rh, 0.011, 0.016)) k.team(g, 0.82, { p: [0, h + 0.012, 0] })
-  k.team(box(w + 0.036, 0.011, 0.012), 0.55, { p: [0, h + 0.012 + rh + 0.006, 0] })
+  for (const g of gableRoof(w, d, rh, 0.011, 0.016)) k.team(g, 1, { p: [0, h + 0.012, 0], mottle: 0.5 })
+  k.teamDark(box(w + 0.036, 0.011, 0.012), 1, { p: [0, h + 0.012 + rh + 0.006, 0] })
   // the forge: an open front with a glowing hearth
   k.add(box(0.06, 0.06, 0.006), C.iron, { p: [0.03, 0.045, d / 2 + 0.002] })
   k.glow(box(0.034, 0.022, 0.006), C.forge, { p: [0.03, 0.03, d / 2 + 0.004] })
@@ -404,8 +407,8 @@ function barn(k: Kit, faluRed: boolean) {
   const wall = faluRed ? C.falu : C.tar
   k.add(box(w, h, d), wall, { p: [0, h / 2 + 0.01, 0] })
   for (const sx of [-1, 1]) k.add(gableEnd(d, rh, 0.004), wall, { p: [sx * (w / 2 - 0.002), h + 0.01, 0] })
-  for (const g of gableRoof(w, d, rh, 0.01, 0.014)) k.team(g, 0.72, { p: [0, h + 0.01, 0] })
-  k.team(box(w + 0.03, 0.01, 0.011), 0.5, { p: [0, h + 0.01 + rh + 0.005, 0] })
+  for (const g of gableRoof(w, d, rh, 0.01, 0.014)) k.team(g, 1, { p: [0, h + 0.01, 0], mottle: 0.5 })
+  k.teamDark(box(w + 0.03, 0.01, 0.011), 1, { p: [0, h + 0.01 + rh + 0.005, 0] })
   // white-trimmed doors with an X brace
   k.add(box(0.05, 0.055, 0.004), C.boards, { p: [0, 0.038, d / 2 + 0.002] })
   for (const s of [-1, 1]) k.add(box(0.004, 0.07, 0.004), C.trim, { p: [0, 0.038, d / 2 + 0.005], r: [0, 0, s * 0.72] })
@@ -481,6 +484,7 @@ function jetty(k: Kit) {
   // a lantern at the end
   k.add(cyl(0.003, 0.003, 0.09, 5), C.timberDark, { p: [-w / 2 + 0.006, 0.045, len - 0.01] })
   k.glow(box(0.012, 0.016, 0.012), C.lantern, { p: [-w / 2 + 0.006, 0.093, len - 0.01] })
+  k.anchor('halo', [-w / 2 + 0.006, 0.093, len - 0.01])
   k.add(cone(0.011, 0.01, 4), C.iron, { p: [-w / 2 + 0.006, 0.106, len - 0.01], r: [0, Math.PI / 4, 0] })
   // a crate and a coil of rope
   k.add(box(0.02, 0.018, 0.02), C.boardsLight, { p: [0.015, 0.013, 0.06] })
@@ -588,7 +592,7 @@ function ground(k: Kit) {
     const a = ((60 * i - 30) * Math.PI) / 180
     return [Math.cos(a) * r, Math.sin(a) * r] as [number, number]
   })
-  k.add(flat(lawn(0.875), 0.002), C.lawn)
+  k.add(flat(lawn(0.875), 0.002), C.lawn, { mottle: 0.95 })
   for (let i = 0; i < 6; i++) {
     const a0 = ((60 * i - 30) * Math.PI) / 180
     const a1 = ((60 * i + 30) * Math.PI) / 180
@@ -598,7 +602,16 @@ function ground(k: Kit) {
     k.add(box(r, 0.008, 0.012), C.stoneDark, { p: [mx, 0.004, mz], r: [0, -Math.atan2(mz, mx) + Math.PI / 2, 0] })
   }
   // the square: warm flagstones, a darker band and a compass rose in the player colour
-  k.add(lathe([[SQUARE_R + 0.012, 0], [SQUARE_R + 0.012, 0.009], [SQUARE_R, 0.012], [0, 0.012]], 56), C.flag)
+  k.add(lathe([[SQUARE_R + 0.012, 0], [SQUARE_R + 0.012, 0.009], [SQUARE_R, 0.012], [0, 0.012]], 56), C.flag, { mottle: 0.3 })
+  // flower strips along the kerb in front of each inner plot
+  for (let i = 0; i < 6; i++) {
+    const a0 = (i * 60 * Math.PI) / 180
+    for (let j = -4; j <= 4; j++) {
+      const a = a0 + j * 0.075
+      const r = SQUARE_R + 0.024 + (j % 2 ? 0.006 : 0)
+      k.add(new THREE.IcosahedronGeometry(0.0085, 0), j % 3 === 0 ? C.leaf[1] : C.flowers[(i * 3 + j + 9) % C.flowers.length], { p: [Math.cos(a) * r, 0.011, Math.sin(a) * r] })
+    }
+  }
   k.add(lathe([[0.315, 0.0122], [0.255, 0.0122]], 56), C.flagDark)
   k.add(lathe([[0.13, 0.0123], [0.118, 0.0123]], 40), C.gold)
   const star: [number, number][] = []
@@ -632,6 +645,7 @@ function lanterns(k: Kit) {
       k.add(cyl(0.0028, 0.0032, 0.075, 5), C.iron, { p: [0, 0.045, 0] })
       k.glow(box(0.014, 0.017, 0.014), C.lantern, { p: [0, 0.088, 0] })
       k.add(cone(0.013, 0.012, 4), C.iron, { p: [0, 0.102, 0], r: [0, Math.PI / 4, 0] })
+      k.anchor('halo', [0, 0.088, 0])
     })
   }
 }
@@ -677,6 +691,34 @@ function garden(k: Kit, seed: number) {
   k.add(box(w, 0.004, 0.004), C.trim, { p: [0, 0.018, d / 2 + 0.008] })
 }
 
+function flowerbed(k: Kit, seed: number) {
+  const rx = 0.075, rz = 0.05
+  k.add(lathe([[1, 0], [1, 0.012], [0.92, 0.016], [0, 0.017]], 20), C.soilDark, { s: [rx, 1, rz] })
+  // a clipped box hedge around it, open at the front
+  for (let i = 0; i < 16; i++) {
+    const a = (i / 16) * Math.PI * 2
+    if (Math.abs(Math.sin(a) - 1) < 0.2) continue
+    k.add(new THREE.IcosahedronGeometry(0.014, 0), C.greensDark, { p: [Math.cos(a) * (rx + 0.008), 0.012, Math.sin(a) * (rz + 0.008)], s: [1, 0.85, 1], mottle: 0.5 })
+  }
+  for (let i = 0; i < 14; i++) {
+    const a = i * 2.399
+    const r = Math.sqrt((i + 0.5) / 14) * 0.85
+    k.add(sphere(0.008, 5, 4), C.flowers[(seed + i) % C.flowers.length], { p: [Math.cos(a) * r * rx, 0.024, Math.sin(a) * r * rz] })
+    if (i % 3 === 0) k.add(sphere(0.007, 4, 3), C.leaf[i % C.leaf.length], { p: [Math.cos(a + 1) * r * rx, 0.02, Math.sin(a + 1) * r * rz] })
+  }
+}
+
+function hedge(k: Kit) {
+  // a clipped hedge along x with a little arch-gap, and a bench behind it
+  for (const [x0, x1] of [[-0.1, -0.02], [0.02, 0.1]] as const) {
+    k.add(box(x1 - x0, 0.032, 0.026), C.greensDark, { p: [(x0 + x1) / 2, 0.018, 0], mottle: 0.6 })
+    k.add(box(x1 - x0 - 0.006, 0.006, 0.02), C.greens, { p: [(x0 + x1) / 2, 0.037, 0], mottle: 0.6 })
+  }
+  k.add(box(0.05, 0.006, 0.016), C.boardsLight, { p: [0.0, 0.022, -0.04] })
+  for (const sx of [-1, 1]) k.add(box(0.005, 0.02, 0.012), C.timberDark, { p: [sx * 0.02, 0.01, -0.04] })
+  for (let i = 0; i < 5; i++) k.add(sphere(0.006, 4, 3), C.flowers[(i * 2) % C.flowers.length], { p: [-0.09 + i * 0.045, 0.04, 0.012] })
+}
+
 // ---------------------------------------------------------------------------------------------
 // The catalogue
 
@@ -685,7 +727,7 @@ export type CityVariant =
   | 'keep' | 'hall' | 'temple' | 'market' | 'workshop' | 'barracks'
   | 'farmWheat' | 'farmGreens' | 'farmFlowers' | 'farmWheatTar' | 'sawmill' | 'jetty' | 'stairs' | 'boat'
   | 'wall' | 'gate' | 'tower'
-  | 'ground' | 'lanterns' | 'road' | 'well' | 'linden' | 'blossom' | 'bushes' | 'garden'
+  | 'ground' | 'lanterns' | 'road' | 'well' | 'linden' | 'blossom' | 'bushes' | 'garden' | 'flowerbed' | 'hedge'
 
 export const HOUSES: CityVariant[] = ['cottage', 'thatched', 'townhouse', 'longhouse', 'hiphouse', 'tallhouse']
 
@@ -703,6 +745,8 @@ const BUILDERS: Record<CityVariant, (k: Kit) => void> = {
   blossom: (k) => tree(k, [...C.blossom, C.leaf[1]], 1),
   bushes: (k) => bushes(k, 2),
   garden: (k) => garden(k, 1),
+  flowerbed: (k) => flowerbed(k, 2),
+  hedge,
 }
 
 const cache = new Map<CityVariant, Model>()
@@ -715,6 +759,26 @@ export function cityModel(v: CityVariant): Model {
     cache.set(v, m)
   }
   return m
+}
+
+/** Roof tones for ordinary buildings (the player colour stays on accents and landmarks). */
+export const ROOFS: { color: THREE.Color; weight: number }[] = [
+  { color: new THREE.Color('#C46A45'), weight: 0.28 }, // terracotta
+  { color: new THREE.Color('#A9553B'), weight: 0.14 }, // dark terracotta
+  { color: new THREE.Color('#7D8899'), weight: 0.2 }, // warm slate blue-grey
+  { color: new THREE.Color('#8C8792'), weight: 0.1 }, // lavender slate
+  { color: new THREE.Color('#D3AE5E'), weight: 0.12 }, // thatch gold
+  { color: new THREE.Color('#8E8D5C'), weight: 0.16 }, // mossy weathered tile
+]
+
+/** True when two colours are close in hue and both clearly coloured. */
+export function hueClash(a: THREE.Color, b: THREE.Color, within = 0.07): boolean {
+  const ha = { h: 0, s: 0, l: 0 }
+  const hb = { h: 0, s: 0, l: 0 }
+  a.getHSL(ha)
+  b.getHSL(hb)
+  const dh = Math.min(Math.abs(ha.h - hb.h), 1 - Math.abs(ha.h - hb.h))
+  return dh < within && ha.s > 0.25 && hb.s > 0.25
 }
 
 /** Pick a plaster colour that does not fight the player colour. */

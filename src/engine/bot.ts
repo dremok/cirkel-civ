@@ -10,11 +10,14 @@
 //             option commits first and options made stale by a commit are re-scored (lazy greedy)
 //   cities    expand while good sites remain, keep a garrison, counter the enemy's unit mix
 
-import { CITY_MAX_HP, MIN_CITY_DISTANCE, MODIFIERS, TICKS_PER_TURN, TILE_YIELD, UNITS } from './config.ts'
+import { CITY_MAX_HP, MIN_CITY_DISTANCE, MODIFIERS, TICKS_PER_TURN, UNITS } from './config.ts'
+import { BUILDINGS, PLOTS, PLOT_NEIGHBORS, buildingYield, canPlace, fortifiedSides, hasBuilding } from './city.ts'
+import { foodSurplus, housingOf, outputOf } from './economy.ts'
 import {
+  cityCanShoot,
   cityDefense,
-  cityRange,
   cityRangedStrength,
+  sidesToward,
   damage,
   inRange,
   meleeOutcome,
@@ -27,7 +30,9 @@ import { distance, neighbors, tilesInRange } from './hex.ts'
 import { edges, extractPath, pathField, pathTiming, type PathField } from './paths.ts'
 import { hashString, mulberry32, type Rng } from './rng.ts'
 import { isPassable, isWater } from './terrain.ts'
-import type { BuildItem, City, GameState, PlayerId, PlayerOrders, Stance, TileId, Unit, UnitType } from './types.ts'
+import type {
+  Biome, BuildItem, BuildingOrder, BuildingType, City, CityFocus, GameState, PlayerId, PlayerOrders, Stance, TileId, Unit, UnitType,
+} from './types.ts'
 
 const VALUE: Record<UnitType, number> = { spear: 20, archer: 25, rider: 30, settler: 45 }
 const MILITARY: UnitType[] = ['spear', 'archer', 'rider']
@@ -35,6 +40,10 @@ const MILITARY: UnitType[] = ['spear', 'archer', 'rider']
 const SITE_REACH = 5
 /** Site score worth a settler. */
 const GOOD_SITE = 40
+/** How much a neighbouring tile of a new city is worth (it decides the plots facing it). */
+const SITE_VALUE: Record<Biome, number> = {
+  grass: 3, plains: 3, forest: 2.5, hills: 2.5, shallow: 2, deep: 1.5, beach: 0.5, mountain: 0, snow: 0,
+}
 const MAX_SETTLERS = 2
 /** Score per turn of progress toward the objective. */
 const PROGRESS = 10
@@ -103,6 +112,11 @@ class Bot {
   private mode: 'gather' | 'attack' = 'gather'
   private objective: TileId = -1
   private targetCity: City | null = null
+  /** Massing at the staging tile before an assault (units gather tightly). */
+  private staging = false
+  private readonly aggression: number
+  /** My soldiers within 2 of each tile (see planArmy). */
+  private crowd = new Int32Array(0)
   /** My cities with enemy soldiers within 4: their power and the closest intruder. */
   private threatened: { c: City; power: number; intruder: Unit }[] = []
 
@@ -110,6 +124,8 @@ class Bot {
     this.s = s
     this.me = me
     this.rng = mulberry32(hashString(`${seed}:${s.turn}:${me}`))
+    // A personality per game and seat: 0 builds and waits, 1 arms early and attacks with a small edge.
+    this.aggression = mulberry32(hashString(`${seed}:persona:${me}`))()
     const n = s.map.tiles.length
     this.unitAt = new Int32Array(n).fill(-1)
     s.units.forEach((u, i) => (this.unitAt[u.tile] = i))
@@ -128,7 +144,7 @@ class Bot {
     this.planSettlers()
     this.planGarrisons()
     this.planArmy()
-    const orders: PlayerOrders = { units: {}, cities: this.planCities() }
+    const orders: PlayerOrders = { units: {}, ...this.planCities() }
     for (const p of this.plans.values()) {
       orders.units[p.unit.id] = { path: p.path, stance: p.stance, found: p.found, target: p.target }
     }
@@ -220,7 +236,7 @@ class Bot {
         total += 0.6 * damage(unitRangedStrength(map, e, tile), unitDefense(map, v, null, e.tile, { city: null }))
       }
       for (const c of this.enemyCities) {
-        if (c.hp > 0 && inRange(map, c.tile, tile, cityRange)) {
+        if (c.hp > 0 && cityCanShoot(map, c, tile)) {
           total += damage(cityRangedStrength(map, c, tile), unitDefense(map, v, null, c.tile, { city: null }))
         }
       }
@@ -291,35 +307,68 @@ class Bot {
     if (this.enemyCities.length === 0 || this.myCities.length === 0) return
     const { map } = this.s
     const anchor = this.myCities.find((c) => c.capital) ?? this.myCities[0]
+    const field = this.mine.filter((u) => !UNITS[u.type].civilian && this.cityAt[u.tile] < 0)
+    // Turns of walking from where the army stands (or from the capital), along real paths: an army
+    // near a city keeps at it, and a city across a ridge is as far as the detour.
+    const away = (c: City) => {
+      const d = this.distTo(c.tile)
+      if (!field.length) return d[anchor.tile] / 12
+      return field.reduce((s, u) => s + Math.min(d[u.tile], 200) / (UNITS[u.type].speed * TICKS_PER_TURN), 0) / field.length
+    }
     let best: { c: City; v: number } | null = null
     for (const c of this.enemyCities) {
       const near = this.enemies.filter((e) => distance(map, e.tile, c.tile) <= 3)
+      // A siege already under way is worth finishing.
+      const besieging = this.power(field.filter((u) => distance(map, u.tile, c.tile) <= 3))
       const v =
-        distance(map, anchor.tile, c.tile) * 1.5 + this.power(near) + (c.walls ? 5 : 0) + c.hp / 4 + this.rng()
+        away(c) * 3 + this.power(near) * 0.5 + fortifiedSides(c.interior, 'wall').size + c.hp / 4 - besieging + this.rng() * 0.3
       if (!best || v < best.v) best = { c, v }
     }
     const target = best!.c
     this.targetCity = target
     const myField = this.mine.filter((u) => !UNITS[u.type].civilian && this.cityAt[u.tile] < 0)
-    const within = (r: number, at: TileId) => myField.filter((u) => distance(map, u.tile, at) <= r)
     // The city itself shoots and defends: count it as a few soldiers.
-    const theirs = this.power(this.enemies.filter((e) => distance(map, e.tile, target.tile) <= 5)) + (target.walls ? 8 : 5)
+    const theirs = this.power(this.enemies.filter((e) => distance(map, e.tile, target.tile) <= 5)) + 5 + fortifiedSides(target.interior, 'wall').size / 2
     const mine = this.power(myField)
-    const late = this.s.turn > this.s.maxTurns - 15
+    // The edge it waits for shrinks as the game goes on: early it builds up, later it commits.
+    const start = 30 - 18 * this.aggression // when the waiting gets shorter
+    const edge = Math.max(0.6, 1.3 - 0.4 * this.aggression - Math.max(0, this.s.turn - start) / 40)
     const front = [...this.myCities].sort(
       (a, b) => distance(map, a.tile, target.tile) - distance(map, b.tile, target.tile) || a.id - b.id,
     )[0]
-    if (mine < theirs * 1.1 + 2 && !(late && mine >= theirs * 0.8)) {
+    if (mine < theirs * edge + 2) {
       this.mode = 'gather'
       this.objective = this.frontTile(front.tile, target.tile, 2)
       return
     }
-    // Mass at a staging tile three steps out, then assault; once engaged, keep going.
+    // Mass just outside the city's reach, on a side it can actually be reached from, then storm it
+    // together; once engaged, keep going. Closeness is measured along real paths (ridges and cliffs
+    // can make a city three hexes away four turns away), so the army does not trickle in.
     this.mode = 'attack'
-    const staging = this.frontTile(target.tile, front.tile, 3)
-    const engaged = this.power(within(3, target.tile))
-    const massed = engaged + this.power(within(2, staging))
-    this.objective = engaged >= theirs * 0.8 || massed >= theirs * 1.1 + 2 ? target.tile : staging
+    const toTarget = this.distTo(target.tile)
+    const staging = this.stagingTile(target, front.tile, toTarget)
+    const steps = (u: Unit) => toTarget[u.tile] / (UNITS[u.type].speed * TICKS_PER_TURN)
+    const engaged = this.power(myField.filter((u) => steps(u) <= 1))
+    const massed = this.power(myField.filter((u) => steps(u) <= 2.5 || distance(map, u.tile, staging) <= 2))
+    const go = engaged >= theirs * 0.8 * edge || massed >= theirs * edge + 2
+    this.objective = go ? target.tile : staging
+    this.staging = !go
+  }
+
+  /** Where to mass before storming `target`: 3-4 hexes out, at most about a turn and a half of real
+   * walking from it, and on the side facing `home`. */
+  private stagingTile(target: City, home: TileId, toTarget: Float64Array): TileId {
+    const { map } = this.s
+    const fromHome = this.distTo(home)
+    let best = this.frontTile(target.tile, home, 4)
+    let bestV = Infinity
+    for (const t of tilesInRange(map, target.tile, 4)) {
+      const d = distance(map, t, target.tile)
+      if (d < 3 || !isPassable(map, t) || this.cityAt[t] >= 0 || toTarget[t] > 18) continue
+      const v = toTarget[t] + fromHome[t] * 0.5
+      if (v < bestV) [best, bestV] = [t, v]
+    }
+    return best
   }
 
   /** A passable tile `steps` out from `home` in the direction of `toward`. */
@@ -346,12 +395,16 @@ class Bot {
       const home = this.nearestCity(u.tile)
       if (home) return home.tile
     }
+    // While attacking, only nearby units turn back, and only for a force that outweighs the city
+    // and its garrison (enemy soldiers near a frontier city are often just guarding their own).
+    const attacking = this.mode === 'attack'
     let defend: { d: number; intruder: Unit } | null = null
     for (const { c, power, intruder } of this.threatened) {
       const g = this.garrisonOf(c, this.me)
-      const serious = power > (g ? this.power([g]) * 2 : 0) + (this.mode === 'attack' ? 6 : 0)
+      const close = attacking ? this.power(this.enemies.filter((e) => !UNITS[e.type].civilian && distance(map, e.tile, c.tile) <= 3)) : power
+      const serious = close > (g ? this.power([g]) * 2 : 0) + (attacking ? 8 : 0)
       const d = distance(map, u.tile, c.tile)
-      if (serious && d <= 5 && (!defend || d < defend.d)) defend = { d, intruder }
+      if (serious && d <= (attacking ? 3 : 5) && (!defend || d < defend.d)) defend = { d, intruder }
     }
     if (defend) return defend.intruder.tile
     return this.objective >= 0 ? this.objective : u.tile
@@ -414,8 +467,6 @@ class Bot {
     const { map } = this.s
     const n = map.tiles.length
     const score = new Float64Array(n).fill(-Infinity)
-    const worked = new Uint8Array(n)
-    for (const c of this.s.cities) for (const t of tilesInRange(map, c.tile, 2)) worked[t] = 1
     const close = new Uint8Array(n)
     for (const c of this.myCities) for (const t of tilesInRange(map, c.tile, SITE_REACH)) close[t] = 1
     for (let t = 0; t < n; t++) {
@@ -430,18 +481,13 @@ class Bot {
         else enemyNear = Math.min(enemyNear, d)
       }
       if (near < MIN_CITY_DISTANCE || mineNear > SITE_REACH || enemyNear < 4 || enemyNear < mineNear - 1) continue
+      // Each neighbour is faced by three outer plots (one corner, two sides).
       let v = 0
-      for (const r of tilesInRange(map, t, 2)) {
-        if (r === t) continue
-        const y = TILE_YIELD[map.tiles[r].biome]
-        v += (y.food * 1.2 + y.prod) * (worked[r] ? 0.4 : 1)
-      }
-      const cy = TILE_YIELD[map.tiles[t].biome]
-      v += cy.food + cy.prod
+      for (const nb of neighbors(map, t)) v += SITE_VALUE[map.tiles[nb].biome] * 4
       if (map.tiles[t].biome === 'hills') v += 3 // defensible
       v -= Math.max(0, mineNear - 3) * 3
       v -= this.meleeThreat[t].length * 6
-      if (neighbors(map, t).filter((nb) => isWater(map, nb)).length >= 4) v -= 6
+      if (neighbors(map, t).filter((nb) => isWater(map, nb)).length >= 4) v -= 8
       score[t] = v
     }
     this.sites = score
@@ -522,6 +568,9 @@ class Bot {
 
   private planArmy(): void {
     const units = this.mine.filter((u) => !UNITS[u.type].civilian && !this.plans.has(u.id))
+    // How many of my soldiers stand within 2 of each tile: enemy fire is shared among them.
+    this.crowd = new Int32Array(this.s.map.tiles.length)
+    for (const u of this.mine) if (!UNITS[u.type].civilian) for (const t of tilesInRange(this.s.map, u.tile, 2)) this.crowd[t]++
     const reach = new Map(units.map((u) => [u.id, this.reachFor(u)]))
     const options = new Map(units.map((u) => [u.id, this.bestOption(u, reach.get(u.id)!)]))
     while (options.size) {
@@ -559,11 +608,13 @@ class Bot {
     const { map } = this.s
     const st = UNITS[u.type]
     const objective = this.objectiveFor(u)
-    const goal = this.distTo(objective)
-    // When gathering, within a turn of the spot counts as there (units spread out instead of
-    // queueing); an assault goes all the way in.
-    const slack = objective === this.targetCity?.tile ? 0 : 1
     const perTurn = st.speed * TICKS_PER_TURN
+    // Gathering: within a turn of the spot counts as there (units spread out instead of queueing).
+    // Massing for an assault: everyone closes to the staging ring around the target (measured along
+    // real paths) and nobody walks back to it. The assault itself goes all the way in.
+    const massing = this.staging && objective === this.objective && !!this.targetCity
+    const goal = this.distTo(massing ? this.targetCity!.tile : objective)
+    const slack = objective === this.targetCity?.tile ? 0 : massing ? goal[this.objective] / perTurn : 1
     const caution = this.mode === 'attack' ? 0.35 : 0.6
     let best: Option = { unit: u, field: f, dest: u.tile, end: u.tile, stance: 'hold', target: null, v: -Infinity }
     const consider = (o: Option) => {
@@ -603,7 +654,10 @@ class Bot {
         }
       }
       if (exposed || this.nearEnemyCity(t)) {
-        const dz = this.danger(u, t, stance)
+        // Attacking in numbers, each unit takes its share of the enemy's fire.
+        const threats = this.meleeThreat[t].length + this.rangedThreat[t].length + (this.nearEnemyCity(t) ? 1 : 0)
+        const share = this.mode === 'attack' ? Math.min(1, Math.max(0.25, threats / Math.max(1, this.crowd[t]))) : 1
+        const dz = this.danger(u, t, stance) * share
         v -= (Math.min(dz, u.hp) / 10) * VALUE[u.type] * caution + (dz >= u.hp ? VALUE[u.type] * caution : 0)
       }
       const biome = map.tiles[t].biome
@@ -615,7 +669,7 @@ class Bot {
   }
 
   private nearEnemyCity(t: TileId): boolean {
-    for (const c of this.enemyCities) if (c.hp > 0 && inRange(this.s.map, c.tile, t, cityRange)) return true
+    for (const c of this.enemyCities) if (c.hp > 0 && cityCanShoot(this.s.map, c, t)) return true
     return false
   }
 
@@ -669,8 +723,11 @@ class Bot {
   // ---------------------------------------------------------------------------------------------
   // Cities
 
-  private planCities(): Record<number, BuildItem> {
-    const out: Record<number, BuildItem> = {}
+  /** Every city's build (a unit or a building on a plot) and focus. */
+  private planCities(): { cities: Record<number, BuildItem>; focus: Record<number, CityFocus> } {
+    const { map } = this.s
+    const cities: Record<number, BuildItem> = {}
+    const focus: Record<number, CityFocus> = {}
     const sites = this.siteScores()
     let goodSites = 0
     for (let t = 0; t < sites.length; t++) if (sites[t] >= GOOD_SITE) goodSites++
@@ -678,35 +735,128 @@ class Bot {
     for (const u of this.mine) counts[u.type]++
     const theirs: Record<UnitType, number> = { spear: 0, archer: 0, rider: 0, settler: 0 }
     for (const e of this.enemies) theirs[e.type]++
-    const military = counts.spear + counts.archer + counts.rider
-    const enemyMilitary = theirs.spear + theirs.archer + theirs.rider
-    let settlers = Math.min(MAX_SETTLERS - counts.settler, goodSites)
+    let military = counts.spear + counts.archer + counts.rider
+    // New cities stop paying off late in the game.
+    const settleUntil = this.s.maxTurns - 25 - 15 * this.aggression
+    let settlers = this.s.turn > settleUntil ? 0 : Math.min(MAX_SETTLERS - counts.settler, goodSites)
     const minArmy = this.myCities.length + 1
+    // The army to keep up: a garrison where one is needed, plus a field army that grows with time.
+    const garrisons = this.myCities.filter((c) => this.needsGarrison(c)).length
+    const wantArmy = garrisons + Math.round((3 + this.s.turn / 4) * (0.7 + this.aggression))
+    const unit = (t: UnitType): BuildItem => {
+      if (t !== 'settler') {
+        counts[t]++
+        military++
+      }
+      return t
+    }
 
     for (const c of [...this.myCities].sort((a, b) => b.pop - a.pop || a.id - b.id)) {
-      const threat = this.threatened.find((x) => x.c === c)?.power ?? 0
-      let item: BuildItem
-      if (threat > 0 && !this.garrisonOf(c, this.me)) item = theirs.rider > theirs.spear ? 'spear' : 'archer'
-      else if (threat > 8 && !c.walls && c.pop >= 3) item = 'walls'
-      else if (threat > 3) item = this.counter(counts, theirs)
-      else if (settlers > 0 && c.pop >= 2 && military >= minArmy) {
+      const out = outputOf(map, c)
+      const housing = housingOf(c.interior)
+      const surplus = foodSurplus(c, out)
+      const threat = this.threatened.find((x) => x.c === c)
+      const danger = threat?.power ?? 0
+      let item: BuildItem | null = null
+      if (danger > 0 && !this.garrisonOf(c, this.me)) item = unit(theirs.rider > theirs.spear ? 'spear' : 'archer')
+      else if (threat && danger > 6 + this.power(this.garrisonOf(c, this.me) ? [this.garrisonOf(c, this.me)!] : []) * 2) {
+        item = this.fortify(c, threat.intruder, danger) ?? unit(this.counter(counts, theirs))
+      }
+      else if (danger > 3 || military < minArmy) item = unit(this.counter(counts, theirs))
+      else if (settlers > 0 && c.pop >= 2) {
         item = 'settler'
         settlers--
-      } else if (!c.walls && c.pop >= 5 && enemyMilitary > military) item = 'walls'
-      else item = this.counter(counts, theirs)
-      if (item !== 'settler' && item !== 'walls') counts[item]++
-      out[c.id] = item
+      } else if (out.idle > 0) item = this.bestJob(c, surplus, c.pop < housing)
+      if (!item && c.pop >= housing - 1 && surplus > 0) item = this.bestPlot(c, 'house')
+      if (!item && military < wantArmy) item = unit(this.counter(counts, theirs))
+      if (!item && !hasBuilding(c.interior, 'barracks') && out.prod >= 6) item = this.bestPlot(c, 'barracks')
+      if (!item && !hasBuilding(c.interior, 'temple') && c.pop >= 4 && danger === 0) item = this.bestPlot(c, 'temple')
+      if (!item) item = unit(this.counter(counts, theirs))
+      cities[c.id] = item
+      focus[c.id] = danger > 3 ? 'production' : c.pop < housing && surplus < 4 ? 'growth' : 'balance'
     }
-    return out
+    return { cities, focus }
+  }
+
+  /** Best value of a plot for a job building facing outward (what a House would waste there). */
+  private plotReserve(c: City, plot: number): number {
+    if (PLOTS[plot].ring === 1) return 2
+    let best = 0
+    for (const b of ['farm', 'sawmill', 'harbor'] as BuildingType[]) {
+      if (!canPlace(this.s.map, c.tile, c.interior, b, plot).ok) continue
+      const y = this.yieldIf(c, b, plot)
+      best = Math.max(best, y.food + y.prod)
+    }
+    return best
+  }
+
+  private yieldIf(c: City, b: BuildingType, plot: number): { food: number; prod: number } {
+    const trial = { ...c.interior, plots: c.interior.plots.slice() }
+    trial.plots[plot] = b
+    return buildingYield(this.s.map, c.tile, trial, plot)
+  }
+
+  /** A worker-less building on its best plot: houses next to markets and away from good land,
+   * barracks and temples on any inner plot. */
+  private bestPlot(c: City, b: BuildingType): BuildingOrder | null {
+    let best: { plot: number; v: number } | null = null
+    for (let p = 1; p < PLOTS.length; p++) {
+      if (!canPlace(this.s.map, c.tile, c.interior, b, p).ok) continue
+      const markets = PLOT_NEIGHBORS[p].filter((n) => c.interior.plots[n] === 'market').length
+      const v = b === 'house' ? markets - this.plotReserve(c, p) : -p * 0.01
+      if (!best || v > best.v) best = { plot: p, v }
+    }
+    return best && { building: b, plot: best.plot }
+  }
+
+  /** The job building worth most per production, counting what it adds to its neighbours. Food is
+   * worth more while the city can still grow. */
+  private bestJob(c: City, surplus: number, canGrow: boolean): BuildingOrder | null {
+    const wf = canGrow ? (surplus < 3 ? 1.6 : 1.1) : 0.5
+    let best: { order: BuildingOrder; v: number } | null = null
+    for (const b of ['farm', 'harbor', 'sawmill', 'workshop', 'market'] as BuildingType[]) {
+      for (let p = 1; p < PLOTS.length; p++) {
+        if (!canPlace(this.s.map, c.tile, c.interior, b, p).ok) continue
+        const y = this.yieldIf(c, b, p)
+        const food = y.food
+        let prod = y.prod
+        for (const n of PLOT_NEIGHBORS[p]) {
+          const nb = c.interior.plots[n]
+          if (nb === 'workshop' && (b === 'workshop' || b === 'sawmill')) prod++
+        }
+        // An idle citizen already gives 1 food: the job is worth what it adds on top.
+        const v = ((food * wf + prod - 1 * wf) * 20) / BUILDINGS[b].cost - this.plotReserve(c, p) * (PLOTS[p].ring === 1 ? 0 : 0.05)
+        if (!best || v > best.v) best = { order: { building: b, plot: p }, v }
+      }
+    }
+    return best && best.v > 0 ? best.order : null
+  }
+
+  /** A wall (or, once walled, a tower) on the side the intruder comes from, if a plot is free. */
+  private fortify(c: City, intruder: Unit, danger: number): BuildingOrder | null {
+    const sides = sidesToward(this.s.map, c.tile, intruder.tile)
+    const walls = fortifiedSides(c.interior, 'wall')
+    const kind: BuildingType | null = sides.some((d) => !walls.has(d)) ? 'wall' : danger > 9 && !fortifiedSides(c.interior, 'tower').size ? 'tower' : null
+    if (!kind) return null
+    let best: { plot: number; v: number } | null = null
+    for (let p = 7; p < PLOTS.length; p++) {
+      if (!canPlace(this.s.map, c.tile, c.interior, kind, p).ok) continue
+      const cover = PLOTS[p].facing.filter((d) => sides.includes(d) && !(kind === 'wall' && walls.has(d))).length
+      if (cover === 0) continue
+      const v = cover * 2 + PLOTS[p].facing.length - this.plotReserve(c, p) * 0.5
+      if (!best || v > best.v) best = { plot: p, v }
+    }
+    return best && { building: kind, plot: best.plot }
   }
 
   /** The unit type that best fills the gap between my mix and the counter to theirs. */
   private counter(mine: Record<UnitType, number>, theirs: Record<UnitType, number>): UnitType {
     const total = theirs.spear + theirs.archer + theirs.rider + 1
-    // Spear beats rider, rider beats archer, archer beats spear (and breaches cities).
+    // Spear beats rider, rider beats archer, archer beats spear (and breaches cities: more of them
+    // while attacking).
     const want: Record<string, number> = {
       spear: 1 + (2 * theirs.rider) / total,
-      archer: 1.2 + (2 * theirs.spear) / total,
+      archer: (this.mode === 'attack' ? 1.8 : 1.2) + (2 * theirs.spear) / total,
       rider: 0.8 + (2 * theirs.archer) / total,
     }
     const sum = want.spear + want.archer + want.rider
@@ -746,7 +896,15 @@ export function randomOrders(state: GameState, player: PlayerId, seed = 0): Play
     }
     orders.units[u.id] = { path, stance: stances[Math.floor(rng() * 3)], found: u.type === 'settler' && rng() < 0.3 }
   }
-  const items: BuildItem[] = ['spear', 'archer', 'rider', 'settler', 'walls']
-  for (const c of state.cities) if (c.owner === player) orders.cities[c.id] = items[Math.floor(rng() * items.length)]
+  const units: UnitType[] = ['spear', 'archer', 'rider', 'settler']
+  const buildings = Object.keys(BUILDINGS) as BuildingType[]
+  for (const c of state.cities) {
+    if (c.owner !== player) continue
+    // A random unit, or a random building on a random plot (the engine ignores ones that do not fit).
+    orders.cities[c.id] =
+      rng() < 0.6
+        ? units[Math.floor(rng() * units.length)]
+        : { building: buildings[Math.floor(rng() * buildings.length)], plot: 1 + Math.floor(rng() * (PLOTS.length - 1)) }
+  }
   return orders
 }

@@ -1,5 +1,7 @@
 // The turn log, the end screen, the menu and the score sheet.
-import type { CSSProperties } from 'react'
+import { useEffect, useState, type CSSProperties } from 'react'
+import type { QualityChoice } from '../../net/storage.ts'
+import { audio } from '../../audio/index.ts'
 import { scores } from '../../../engine/index.ts'
 import type { GameState, PlayerId, TileId } from '../../../engine/types.ts'
 import { PLAYERS } from '../../render/palette.ts'
@@ -159,13 +161,26 @@ export function ScoreSheet({ state, me, onClose }: { state: GameState; me: Playe
   )
 }
 
-export function MenuSheet({ onClose, onHelp, onShare, onReplayLast, canReplay }: {
+const QUALITIES: { value: QualityChoice; label: string }[] = [
+  { value: 'auto', label: 'Auto' },
+  { value: 'low', label: 'Low' },
+  { value: 'medium', label: 'Medium' },
+  { value: 'high', label: 'High' },
+  { value: 'ultra', label: 'Ultra' },
+]
+
+export function MenuSheet({ onClose, onHelp, onShare, onReplayLast, canReplay, quality, activeQuality, canSetQuality, onQuality }: {
   onClose: () => void
   onHelp: () => void
   onShare: () => void
   onReplayLast: () => void
   canReplay: boolean
+  quality: QualityChoice
+  activeQuality: string | null
+  canSetQuality: boolean
+  onQuality: (q: QualityChoice) => void
 }) {
+  const [choice, setChoice] = useState(quality)
   return (
     <Sheet title="Menu" onClose={onClose}>
       <nav className="menu-list">
@@ -176,10 +191,78 @@ export function MenuSheet({ onClose, onHelp, onShare, onReplayLast, canReplay }:
         <a href="#/spec" onClick={onClose}><Icon name="book" />Spec</a>
         <a href="#/" onClick={onClose}><Icon name="home" />Home</a>
       </nav>
+      <SoundSettings />
+      {canSetQuality && (
+        <div className="field menu-quality">
+          <span className="label">
+            Graphics{choice === 'auto' && activeQuality ? ` \u00b7 now ${activeQuality}` : ''}
+          </span>
+          <div className="seg">
+            {QUALITIES.map((q) => (
+              <button
+                key={q.value}
+                aria-pressed={choice === q.value}
+                onClick={() => {
+                  setChoice(q.value)
+                  onQuality(q.value)
+                }}
+              >
+                {q.label}
+              </button>
+            ))}
+          </div>
+          {choice === 'ultra' && <p className="menu-keys muted">Ultra adds soft shadows in the seams. It needs a strong graphics card.</p>}
+        </div>
+      )}
       <p className="menu-keys muted">
         Keyboard: <kbd>Enter</kbd> ready, <kbd>Tab</kbd> next unit, <kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> stance, <kbd>Esc</kbd> deselect,
         {' '}<kbd>Space</kbd> skip the replay.
       </p>
     </Sheet>
+  )
+}
+
+const SLIDERS: { bus: 'master' | 'music' | 'ambience' | 'sfx'; label: string }[] = [
+  { bus: 'master', label: 'Volume' },
+  { bus: 'music', label: 'Music' },
+  { bus: 'ambience', label: 'Ambience' },
+  { bus: 'sfx', label: 'Effects' },
+]
+
+/** Mute and the volume buses; the audio module persists them. */
+function SoundSettings() {
+  const [, bump] = useState(0)
+  useEffect(() => audio.subscribe(() => bump((n) => n + 1)), [])
+  const muted = audio.muted
+  return (
+    <div className="field menu-sound">
+      <div className="menu-sound-head">
+        <span className="label">Sound</span>
+        <button className="btn btn-sm btn-ghost" aria-pressed={muted} onClick={() => audio.setMuted(!muted)}>
+          <Icon name={muted ? 'soundOff' : 'sound'} size={17} />
+          {muted ? 'Unmute' : 'Mute'}
+        </button>
+      </div>
+      {SLIDERS.map(({ bus, label }) => (
+        <label key={bus} className={`slider ${muted ? 'is-muted' : ''}`} style={{ '--v': `${audio.volume(bus) * 100}%` } as CSSProperties}>
+          <span>{label}</span>
+          <input
+            type="range"
+            min={0}
+            max={1}
+            step={0.01}
+            value={audio.volume(bus)}
+            onChange={(e) => {
+              const v = Number(e.target.value)
+              audio.setVolume(bus, v)
+              // Effects covers the interface clicks too.
+              if (bus === 'sfx') audio.setVolume('ui', v)
+            }}
+            onPointerUp={() => audio.ui('tap')}
+            aria-label={`${label} volume`}
+          />
+        </label>
+      ))}
+    </div>
   )
 }

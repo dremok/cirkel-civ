@@ -10,7 +10,8 @@ export interface SeatRecord {
 
 /** Everything the server persists about one game (one JSON file). */
 export interface GameRecord {
-  v: 1
+  /** Shape version of this record and its GameState (see migrate.ts). */
+  schemaVersion: number
   id: string
   name: string
   phase: GamePhase

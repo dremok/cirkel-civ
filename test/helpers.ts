@@ -1,4 +1,5 @@
 // Small hand-built positions for rule tests.
+import { newInterior } from '../src/engine/city.ts'
 import { CITY_MAX_HP, UNIT_MAX_HP } from '../src/engine/config.ts'
 import { offsetToAxial } from '../src/engine/hex.ts'
 import type { Biome, City, GameEvent, GameMap, GameState, PlayerOrders, Tile, TileId, Unit, UnitOrder } from '../src/engine/types.ts'
@@ -28,7 +29,7 @@ export function unit(owner: number, type: Unit['type'], tile: TileId, extra: Par
 export function city(owner: number, tile: TileId, extra: Partial<City> = {}): City {
   return {
     id: nextTestId++, owner, name: `C${tile}`, tile, pop: 1, food: 0, prod: 0, hp: CITY_MAX_HP,
-    walls: false, build: null, capital: false, founded: 1, ...extra,
+    walls: false, build: null, capital: false, founded: 1, interior: newInterior(), ...extra,
   }
 }
 

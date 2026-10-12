@@ -4,6 +4,7 @@ import { createHash, randomBytes, randomInt } from 'node:crypto'
 import { botOrders, createGame, hashString, observe, resolveTurn } from '../engine/index.ts'
 import type { GameConfig, GameState, PlayerId, PlayerOrders, ResolveResult } from '../engine/types.ts'
 import type { ClientMessage, CreateOptions, ErrorCode, GameSummary, ServerMessage } from '../shared/protocol.ts'
+import { SCHEMA_VERSION } from './migrate.ts'
 import type { Store } from './store.ts'
 import type { GameRecord, SeatRecord } from './types.ts'
 import { BadRequest, parseClientMessage, sanitizeOrders } from './validate.ts'
@@ -60,6 +61,7 @@ export class Hub {
     const planning = [...this.rooms.values()].filter((r) => r.rec.phase === 'planning')
     console.log(`hub: loaded ${this.rooms.size} games (${planning.length} in progress) from ${this.store.dir}`)
     for (const room of planning) {
+      this.recheckOrders(room)
       const due = room.rec.deadline !== null && room.rec.deadline <= Date.now()
       if (!this.advance(room, due)) this.arm(room)
     }
@@ -147,7 +149,7 @@ export class Hub {
       i === 0 ? { kind: 'human', name: playerName, tokenHash: hashToken(token) } : i >= o.seats - o.bots ? botSeat(i) : openSeat(),
     )
     const rec: GameRecord = {
-      v: 1, id, name: o.name || defaultName(playerName), phase: 'lobby', createdAt: now, updatedAt: now, host: 0, seats,
+      schemaVersion: SCHEMA_VERSION, id, name: o.name || defaultName(playerName), phase: 'lobby', createdAt: now, updatedAt: now, host: 0, seats,
       turnSeconds: o.turnSeconds ?? null, mapSize: o.mapSize ?? null, seed: o.seed ?? null,
       config: null, state: null, previous: null, events: [], orders: {}, ready: seats.map(() => false), deadline: null, log: [],
     }
@@ -276,15 +278,42 @@ export class Hub {
     rec.orders = {}
     rec.ready = rec.seats.map(() => false)
     rec.seats.forEach((s, i) => {
-      if (s.kind !== 'bot' || !state.players[i]?.alive) return
-      try {
-        rec.orders[i] = botOrders(observe(state, i), i, hashString(`${rec.config!.seed}:${state.turn}:${i}`))
-      } catch (e) {
-        console.error(`[${rec.id}] botOrders failed for seat ${i} on turn ${state.turn}:`, e)
-      }
-      rec.ready[i] = true
+      if (s.kind === 'bot' && state.players[i]?.alive) this.planBot(rec, i)
     })
     rec.deadline = rec.turnSeconds && this.aliveHumans(rec).length ? Date.now() + rec.turnSeconds * 1000 : null
+  }
+
+  private planBot(rec: GameRecord, seat: PlayerId) {
+    const state = rec.state!
+    try {
+      rec.orders[seat] = botOrders(observe(state, seat), seat, hashString(`${rec.config!.seed}:${state.turn}:${seat}`))
+    } catch (e) {
+      console.error(`[${rec.id}] botOrders failed for seat ${seat} on turn ${state.turn}:`, e)
+    }
+    rec.ready[seat] = true
+  }
+
+  /**
+   * After a load (and possibly a migration): saved orders must still pass today's validation.
+   * A human whose orders do not is un-readied and plans again; a bot plans again.
+   */
+  private recheckOrders(room: Room) {
+    const rec = room.rec
+    let changed = false
+    for (const [key, orders] of Object.entries(rec.orders)) {
+      const seat = Number(key)
+      try {
+        rec.orders[seat] = sanitizeOrders(orders, rec.state!, seat).orders
+      } catch (e) {
+        if (!(e instanceof BadRequest)) throw e
+        console.log(`[${rec.id}] seat ${seat}: saved orders no longer valid (${e.message}), dropped`)
+        delete rec.orders[seat]
+        rec.ready[seat] = false
+        if (rec.seats[seat]?.kind === 'bot' && rec.state!.players[seat]?.alive) this.planBot(rec, seat)
+        changed = true
+      }
+    }
+    if (changed) this.store.save(rec)
   }
 
   private aliveHumans(rec: GameRecord): PlayerId[] {

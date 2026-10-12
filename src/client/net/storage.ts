@@ -63,3 +63,14 @@ export function getFlag(name: string): boolean {
 export function setFlag(name: string, on: boolean): void {
   set(`flag:${name}`, on ? '1' : null)
 }
+
+export type QualityChoice = 'auto' | 'low' | 'medium' | 'high' | 'ultra'
+
+export function getQuality(): QualityChoice {
+  const v = get('quality')
+  return v === 'low' || v === 'medium' || v === 'high' || v === 'ultra' ? v : 'auto'
+}
+
+export function setQuality(q: QualityChoice): void {
+  set('quality', q === 'auto' ? null : q)
+}

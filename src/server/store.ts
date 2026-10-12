@@ -1,7 +1,8 @@
 // One JSON file per game in <dataDir>/games. Writes are atomic (temp file, fsync, rename) and
 // coalesced per game, so a crash or redeploy leaves either the old or the new file, never half.
-import { mkdir, open, readdir, readFile, rename, unlink } from 'node:fs/promises'
+import { mkdir, open, readdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { migrate, SCHEMA_VERSION } from './migrate.ts'
 import type { GameRecord } from './types.ts'
 
 interface Slot {
@@ -23,7 +24,11 @@ export class Store {
     return join(this.dir, `${id}.json`)
   }
 
-  /** Creates the directory, removes temp files left by a crash, and returns every readable game. */
+  /**
+   * Creates the directory, removes temp files left by a crash, and returns every usable game,
+   * migrated to the current schema. A migrated game's original file is kept in games/backup/.
+   * Files that cannot be read or migrated are left alone and skipped.
+   */
   async loadAll(): Promise<GameRecord[]> {
     await mkdir(this.dir, { recursive: true })
     const games: GameRecord[] = []
@@ -35,9 +40,14 @@ export class Store {
       }
       if (!name.endsWith('.json')) continue
       try {
-        const rec = JSON.parse(await readFile(path, 'utf8')) as GameRecord
-        if (rec?.v !== 1 || typeof rec.id !== 'string' || `${rec.id}.json` !== name || !Array.isArray(rec.seats)) {
-          throw new Error('not a game record')
+        const text = await readFile(path, 'utf8')
+        const { rec, from } = migrate(JSON.parse(text))
+        if (`${rec.id}.json` !== name) throw new Error(`id ${rec.id} does not match the file name`)
+        if (from < SCHEMA_VERSION) {
+          await mkdir(join(this.dir, 'backup'), { recursive: true })
+          await writeFile(join(this.dir, 'backup', `${rec.id}.v${from}.json`), text)
+          this.save(rec)
+          console.log(`store: ${name} migrated from schema v${from} to v${SCHEMA_VERSION}`)
         }
         games.push(rec)
       } catch (e) {

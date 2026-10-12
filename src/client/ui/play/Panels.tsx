@@ -1,18 +1,18 @@
 // Bottom-sheet panels for the selected unit, city or tile.
 import type { CSSProperties, ReactNode } from 'react'
-import { BUILD_COST, CITY_MAX_HP, TILE_YIELD, UNIT_MAX_HP, UNITS } from '../../../engine/index.ts'
-import type { BuildItem, City, GameState, PlayerId, Stance, TileId, Unit } from '../../../engine/types.ts'
+import { buildCost, CITY_MAX_HP, hasBuilding, TILE_YIELD, UNIT_MAX_HP, UNITS } from '../../../engine/index.ts'
+import type { BuildItem, City, GameState, PlayerId, Stance, TileId, Unit, UnitType } from '../../../engine/types.ts'
 import { PLAYERS } from '../../render/palette.ts'
-import { BUILD_ICON, Icon, STANCE_ICON } from '../icons.tsx'
+import { buildIcon, Icon, STANCE_ICON, UNIT_ICON } from '../icons.tsx'
 import {
-  ARCHER_HOLD_HINT, BIOME_NAME, BUILD_NAME, BUILD_SHORT, possessive, STANCE_HINT, STANCE_NAME, tapVerb, turnsWord, UNIT_NAME, unitNoun,
+  ARCHER_HOLD_HINT, BIOME_NAME, buildName, possessive, STANCE_HINT, STANCE_NAME, tapVerb, turnsWord, UNIT_NAME, UNIT_SHORT, unitNoun,
 } from '../strings.ts'
 import { inRange, unitRange } from '../../../engine/combat.ts'
 import type { CityEconomy } from './economy.ts'
 import { cityBuild, foundingCheck, isEnemyAt, planKind, planSteps, unitAt, unitOrder, type Draft } from './planning.ts'
 
 const STANCES: Stance[] = ['cautious', 'aggressive', 'hold']
-const BUILDS: BuildItem[] = ['spear', 'archer', 'rider', 'settler', 'walls']
+const TRAINABLE: UnitType[] = ['spear', 'archer', 'rider', 'settler']
 
 const colorVars = (p: PlayerId | null | undefined): CSSProperties =>
   p == null ? {} : ({ '--c': PLAYERS[p]?.base, '--c-light': PLAYERS[p]?.light, '--c-dark': PLAYERS[p]?.dark } as CSSProperties)
@@ -76,25 +76,26 @@ function arrival(turn: number, tick: number): string {
 function orderLine(state: GameState, draft: Draft, me: PlayerId, u: Unit): { icon: Parameters<typeof Icon>[0]['name']; text: string } {
   const o = unitOrder(draft, u)
   const target = o.target != null ? targetName(state, me, o.target) : null
+  const steps = planSteps(state, u.id, o.path)
   // The volley is fired from wherever the archer ends this turn.
-  const from = planSteps(state, u.id, o.path).filter((st) => st.turn === 0).at(-1)?.tile ?? u.tile
+  const from = steps.filter((st) => st.turn === 0).at(-1)?.tile ?? u.tile
   const range = o.target != null && !inRange(state.map, from, o.target, unitRange(u)) ? ' (out of range)' : ''
+  // Terrain or cities can make an old path impassable: only its valid start gets timed.
+  if (o.path.length && !steps.length) return { icon: 'close', text: 'Its path is blocked. Give it a new one.' }
+  const cut = steps.length < o.path.length ? ' (the rest of the path is blocked)' : ''
+  const last = steps[steps.length - 1]
   if (o.found) {
     const { tooClose } = foundingCheck(state, draft, u)
     if (tooClose) return { icon: 'flag', text: `Too close to ${tooClose.name} to found a city` }
     if (!o.path.length) return { icon: 'flag', text: 'Founds a city here at the end of the turn' }
-    const steps = planSteps(state, u.id, o.path)
-    const last = steps[steps.length - 1]
-    return { icon: 'flag', text: last.turn === 0 ? 'Moves, then founds a city at the end of the turn' : `Founds a city, arriving ${arrival(last.turn, last.tick)}` }
+    return { icon: 'flag', text: last.turn === 0 ? `Moves, then founds a city at the end of the turn${cut}` : `Founds a city, arriving ${arrival(last.turn, last.tick)}${cut}` }
   }
   if (o.path.length) {
-    const steps = planSteps(state, u.id, o.path)
-    const last = steps[steps.length - 1]
     const kind = planKind(state, me, o)
     const volley = target ? ` · volley at ${target}${range}` : ''
     if (kind === 'attack') return { icon: 'swords', text: `Attacks ${targetName(state, me, last.tile) ?? 'the enemy'}, ${arrival(last.turn, last.tick)}${volley}` }
-    const n = o.path.length
-    return { icon: 'arrowRight', text: `Moves ${n === 1 ? '1 step' : `${n} steps`}, arriving ${arrival(last.turn, last.tick)}${volley}` }
+    const n = steps.length
+    return { icon: 'arrowRight', text: `Moves ${n === 1 ? '1 step' : `${n} steps`}, arriving ${arrival(last.turn, last.tick)}${volley}${cut}` }
   }
   if (target) return { icon: 'target', text: `Volley at ${target}${range}` }
   if (o.stance === 'hold') return { icon: 'shield', text: u.type === 'archer' ? 'Holding and keeping watch' : 'Holding its ground' }
@@ -136,7 +137,7 @@ export function UnitPanel({ state, draft, me, unit, editable, hint, actions, onC
   return (
     <section className="panel glass" aria-label={UNIT_NAME[unit.type]}>
       <PanelHead
-        icon={<Icon name={BUILD_ICON[unit.type]} size={22} />}
+        icon={<Icon name={UNIT_ICON[unit.type]} size={22} />}
         owner={unit.owner}
         title={UNIT_NAME[unit.type]}
         sub={mine ? tileText(state, unit.tile) : `${owner?.name ?? 'Unknown'} · ${tileText(state, unit.tile)}`}
@@ -213,16 +214,26 @@ export function CityPanel({ state, draft, me, city, editable, economy, onBuild, 
   const owner = state.players[city.owner]
   const build = cityBuild(draft, city)
   const garrison = unitAt(state, city.tile)
+  const walls = hasBuilding(city.interior, 'wall')
   const turnsFor = (item: BuildItem) => {
     if (!economy || economy.prod <= 0) return null
     // Stored production carries over to whatever is built next.
-    return Math.max(1, Math.ceil((BUILD_COST[item] - city.prod) / economy.prod))
+    return Math.max(1, Math.ceil((buildCost(city, item) - city.prod) / economy.prod))
   }
   const sub = [
     city.capital ? 'Capital' : null,
     mine ? null : owner?.name,
-    city.pop === 1 ? '1 citizen' : `${city.pop} citizens`,
+    `${city.pop} of ${economy?.housing ?? city.pop} citizens`,
   ].filter(Boolean).join(' · ')
+  const growth = !economy
+    ? null
+    : economy.full
+      ? 'No room to grow. Build a house inside the city.'
+      : economy.growIn === null
+        ? 'Not growing: no food to spare.'
+        : economy.growIn <= 1 ? 'Grows next turn' : `Grows in ${turnsWord(economy.growIn)}`
+  const cost = build ? buildCost(city, build) : 0
+  const eta = build ? turnsFor(build) : null
   return (
     <section className="panel glass" aria-label={city.name}>
       <PanelHead
@@ -240,44 +251,50 @@ export function CityPanel({ state, draft, me, city, editable, economy, onBuild, 
             <span><Icon name="prod" size={16} />+{economy.prod} production</span>
           </>
         )}
-        <span className={city.walls ? '' : 'muted'}><Icon name="walls" size={16} />{city.walls ? 'Walls' : 'No walls'}</span>
+        <span className={walls ? '' : 'muted'}><Icon name="walls" size={16} />{walls ? 'Walls' : 'No walls'}</span>
         {garrison && <span><Icon name="shield" size={16} />{garrison.owner === city.owner ? 'Garrison' : 'Occupied'}</span>}
       </div>
-      {economy?.growIn != null && mine && <p className="panel-stats">{economy.growIn <= 1 ? 'Grows next turn' : `Grows in ${turnsWord(economy.growIn)}`}</p>}
+      {growth && mine && <p className="panel-stats">{growth}</p>}
 
       {mine && (
         <>
           <button className="btn btn-sm btn-ghost enter-city" onClick={onEnter}>
             <Icon name="city" size={18} />
-            <span>Enter city</span>
+            <span>Enter city<small> · buildings and focus</small></span>
             <Icon name="arrowRight" size={16} />
           </button>
           <div className="build-now">
             <div className="build-now-row">
               <span className="label">Building</span>
-              <span className="build-now-name serif">{build ? BUILD_NAME[build] : 'Nothing'}</span>
+              <span className="build-now-name serif">
+                {build && <Icon name={buildIcon(build)} size={16} />}
+                {build ? buildName(build) : 'Nothing'}
+              </span>
               <span className="build-now-eta num muted">
-                {build ? `${Math.min(city.prod, BUILD_COST[build])}/${BUILD_COST[build]}${turnsFor(build) ? ` · ${turnsWord(turnsFor(build)!)}` : ''}` : 'Choose below'}
+                {build ? `${Math.min(city.prod, cost)}/${cost}${eta ? ` · ${turnsWord(eta)}` : ''}` : 'Choose below'}
               </span>
             </div>
             <div className="bar" aria-hidden="true">
-              <span style={{ width: build ? `${Math.min(100, (city.prod / BUILD_COST[build]) * 100)}%` : '0%' }} />
+              <span style={{ width: build ? `${Math.min(100, (city.prod / cost) * 100)}%` : '0%' }} />
             </div>
           </div>
-          <div className="build-grid" role="group" aria-label="Build">
-            {BUILDS.map((item) => {
-              const done = item === 'walls' && city.walls
+          <div className="build-grid" role="group" aria-label="Train a unit">
+            {TRAINABLE.map((item) => {
               const t = turnsFor(item)
               return (
-                <button key={item} className="build-opt" aria-pressed={build === item} disabled={!editable || done} onClick={() => onBuild(item)}>
-                  <Icon name={BUILD_ICON[item]} size={22} />
-                  <span className="build-opt-name">{BUILD_SHORT[item]}</span>
-                  <span className="build-opt-cost num">{done ? 'Built' : t ? turnsWord(t) : BUILD_COST[item]}</span>
+                <button key={item} className="build-opt" aria-pressed={build === item} disabled={!editable} onClick={() => onBuild(item)}>
+                  <Icon name={UNIT_ICON[item]} size={22} />
+                  <span className="build-opt-name">{UNIT_SHORT[item]}</span>
+                  <span className="build-opt-cost num">{t ? turnsWord(t) : buildCost(city, item)}</span>
                 </button>
               )
             })}
           </div>
-          {build === 'settler' && <p className="stance-hint">A settler costs one citizen.</p>}
+          {build === 'settler' && (
+            <p className="stance-hint">
+              {city.pop < 2 ? 'A settler costs one citizen, so it finishes once the city has 2.' : 'A settler costs one citizen.'}
+            </p>
+          )}
         </>
       )}
     </section>

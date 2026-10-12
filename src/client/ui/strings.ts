@@ -1,4 +1,5 @@
 // The game's vocabulary (see SPEC.md).
+import { BUILDINGS } from '../../engine/index.ts'
 import type { Biome, BuildItem, Stance, UnitType } from '../../engine/types.ts'
 
 export const UNIT_NAME: Record<UnitType, string> = {
@@ -15,15 +16,15 @@ export const unitNoun = (t: UnitType) => UNIT_NAME[t].toLowerCase()
 export const withArticle = (noun: string) => `${/^[aeiou]/i.test(noun) ? 'an' : 'a'} ${noun}`
 
 /** With soft hyphens, for narrow buttons. */
-export const BUILD_SHORT: Record<BuildItem, string> = {
+export const UNIT_SHORT: Record<UnitType, string> = {
   spear: 'Spear­man',
   archer: 'Archer',
   rider: 'Rider',
   settler: 'Settler',
-  walls: 'Walls',
 }
 
-export const BUILD_NAME: Record<BuildItem, string> = { ...UNIT_NAME, walls: 'Walls' }
+/** "Spearman", or the building's name ("Farm"). */
+export const buildName = (item: BuildItem) => (typeof item === 'string' ? UNIT_NAME[item] : BUILDINGS[item.building].name)
 
 export const STANCE_NAME: Record<Stance, string> = {
   cautious: 'Cautious',

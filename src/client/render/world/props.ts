@@ -8,14 +8,14 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
 import type { WorldQuality } from '../api.ts'
 import { BIOME, NATURE } from '../palette.ts'
 import { lin, mix3 } from './builder.ts'
-import { hash01, hexSdf, type Layout } from './layout.ts'
+import { WATER_Y, hash01, hexSdf, type Layout } from './layout.ts'
 import { patchMaterial, windDepthMaterial } from './shading.ts'
 
 type Kind =
   | 'pine' | 'oak' | 'olive' | 'birch' | 'gold' | 'rust' | 'bush'
   | 'fern' | 'mushroom' | 'log' | 'reed'
   | 'poppy' | 'lavender' | 'buttercup' | 'daisy' | 'clover' | 'tuft' | 'wheat'
-  | 'rock' | 'stone' | 'blob'
+  | 'rock' | 'stone' | 'lily' | 'blob'
 
 type RGB = [number, number, number]
 
@@ -30,7 +30,7 @@ const WIND: Record<Kind, number> = {
   pine: 0.02, oak: 0.024, olive: 0.024, birch: 0.03, gold: 0.024, rust: 0.024, bush: 0.012,
   fern: 0.02, mushroom: 0, log: 0, reed: 0.04,
   poppy: 0.016, lavender: 0.016, buttercup: 0.016, daisy: 0.016, clover: 0, tuft: 0.018, wheat: 0.026,
-  rock: 0, stone: 0, blob: 0,
+  rock: 0, stone: 0, lily: 0, blob: 0,
 }
 /** Soft contact shadow radius under a prop, relative to its scale (0 = none). */
 const BLOB: Partial<Record<Kind, number>> = { pine: 0.4, oak: 0.5, olive: 0.5, birch: 0.36, gold: 0.5, rust: 0.5, bush: 0.5, log: 0.55, wheat: 0.34, rock: 0.62 }
@@ -39,7 +39,7 @@ const CASTS = new Set<Kind>(['pine', 'oak', 'olive', 'birch', 'gold', 'rust', 'b
 /** Foliage: sunlight glows softly through it. */
 const LEAFY = new Set<Kind>(['pine', 'oak', 'olive', 'birch', 'gold', 'rust', 'bush', 'fern', 'reed', 'tuft', 'wheat'])
 /** Thin, flat parts seen from both sides. */
-const TWO_SIDED = new Set<Kind>(['fern'])
+const TWO_SIDED = new Set<Kind>(['fern', 'lily'])
 
 // ------------------------------------------------------------------------------------------------
 // Geometry (authored with the base at y = 0 and about 1 unit tall, coloured per vertex).
@@ -344,6 +344,29 @@ function wheatGeometry(): THREE.BufferGeometry {
   return mergeGeometries(parts)
 }
 
+/** Lily pads: a few notched round leaves floating together, one with a small pink bloom. */
+function lilyGeometry(): THREE.BufferGeometry {
+  const leaf = lin('#4F8A47'), leafLight = lin('#74A858'), bloom = lin('#F2B8C9'), heart = lin('#F2D36B')
+  const parts: THREE.BufferGeometry[] = []
+  const pads = [{ x: 0, z: 0, r: 0.42 }, { x: 0.58, z: 0.22, r: 0.3 }, { x: -0.36, z: 0.5, r: 0.26 }, { x: 0.2, z: -0.55, r: 0.22 }]
+  pads.forEach((p, i) => {
+    // A disc with a wedge cut out, lying flat.
+    const notch = 0.5
+    const g = new THREE.CircleGeometry(p.r, 14, notch / 2 + hash01(i, 200) * 6.28, Math.PI * 2 - notch)
+    g.rotateX(-Math.PI / 2)
+    g.translate(p.x, 0.004 * i, p.z)
+    parts.push(paint(g, () => mix3(leaf, leafLight, hash01(i, 201) * 0.6)))
+  })
+  // A small water-lily flower: two rings of petals around a golden heart.
+  const petals = new THREE.ConeGeometry(0.12, 0.12, 6, 1, true)
+  petals.translate(0.58, 0.07, 0.22)
+  parts.push(paint(petals, () => bloom))
+  const inner = new THREE.ConeGeometry(0.07, 0.1, 5, 1)
+  inner.translate(0.58, 0.1, 0.22)
+  parts.push(paint(inner, (_x, _y, _z, ny) => (ny > 0.6 ? heart : shade(bloom, 1.05))))
+  return mergeGeometries(parts.map((g) => (g.index ? g.toNonIndexed() : g)))
+}
+
 /** A faceted boulder; mossy ones carry moss and lichen on their upward faces. */
 function rockGeometry(seed: number, mossy: boolean): THREE.BufferGeometry {
   const ico = new THREE.IcosahedronGeometry(0.5, 0)
@@ -515,6 +538,12 @@ function place(layout: Layout, quality: WorldQuality): Map<Kind, Prop[]> {
       }
       for (let i = 0; i < (lite ? 1 : 3); i++) { const p = spot(0.04, 0.06); if (p) add('stone', id, p.x, p.z, 0.035 + rnd() * 0.03, rnd() * 6.28, new THREE.Color(1.1, 1.04, 1.0)) }
       if (!lite && rnd() < 0.35) { const p = spot(0.05, 0.06); if (p) add('tuft', id, p.x, p.z, 0.08 + rnd() * 0.03, rnd() * 6.28, new THREE.Color(1.25, 1.15, 0.75)) }
+    } else if (b === 'shallow' && layout.seaDist[id] === 1 && !lite) {
+      // Lily pads drift in the sheltered shallows next to the land.
+      if (rnd() < 0.45) {
+        const a = rnd() * Math.PI * 2, d = 0.15 + rnd() * 0.3
+        add('lily', id, x0 + Math.cos(a) * d, z0 + Math.sin(a) * d, 0.34 + rnd() * 0.12, rnd() * 6.28, tint(1, 0.12), 1, WATER_Y + 0.003)
+      }
     } else if (b === 'mountain') {
       if (rnd() < 0.6) { const p = spot(0.08, 0.04, 0.6); if (p) add('stone', id, p.x, p.z, 0.06 + rnd() * 0.05, rnd() * 6.28, tint(0.95, 0.1)) }
     }
@@ -570,6 +599,7 @@ export function buildProps(layout: Layout, quality: WorldQuality): Props {
     wheat: wheatGeometry,
     rock: () => rockGeometry(1, true),
     stone: () => rockGeometry(2, false),
+    lily: lilyGeometry,
     blob: () => new THREE.PlaneGeometry(2, 2).rotateX(-Math.PI / 2),
   }
   const blobTex = blobTexture()

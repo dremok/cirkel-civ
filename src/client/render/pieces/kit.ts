@@ -18,6 +18,8 @@ export interface Place {
   s?: V3 | number
   /** Cloth: flutter weight per vertex from its local (pre-transform) position, 0 = pinned. */
   flutter?: (x: number, y: number, z: number) => number
+  /** Soft world-space colour variation (lawns, weathered roofs), 0..1. */
+  mottle?: number
 }
 
 export const PAINT_FIXED = 0
@@ -114,6 +116,7 @@ export class Kit {
     geo.setAttribute('paint', new THREE.BufferAttribute(new Float32Array(n).fill(paint), 1))
     geo.setAttribute('flutter', new THREE.BufferAttribute(fl, 1))
     geo.setAttribute('idle', new THREE.BufferAttribute(new Float32Array(n).fill(this.idle), 1))
+    geo.setAttribute('mottle', new THREE.BufferAttribute(new Float32Array(n).fill(o.mottle ?? 0), 1))
     this.parts.push({ g: geo, sil: this.sil })
   }
 
@@ -132,7 +135,7 @@ export class Kit {
 
 function emptyGeometry(): THREE.BufferGeometry {
   const g = new THREE.BufferGeometry()
-  for (const [k, n] of [['position', 3], ['normal', 3], ['color', 3], ['paint', 1], ['flutter', 1], ['idle', 1]] as const) {
+  for (const [k, n] of [['position', 3], ['normal', 3], ['color', 3], ['paint', 1], ['flutter', 1], ['idle', 1], ['mottle', 1]] as const) {
     g.setAttribute(k, new THREE.Float32BufferAttribute([], n))
   }
   return g
@@ -221,7 +224,7 @@ export function gableEnd(d: number, h: number, thick = 0.004): THREE.BufferGeome
 export const pieceUniforms = {
   uPieceTime: { value: 0 },
   uGlowColor: { value: new THREE.Color('#FFB868') },
-  uGlowStrength: { value: 1.25 },
+  uGlowStrength: { value: 2.1 },
 }
 /** @deprecated use pieceUniforms.uPieceTime */
 export const flutterTime = pieceUniforms.uPieceTime
@@ -249,6 +252,9 @@ export function pieceMaterial(o: PieceMatOpts = {}): THREE.MeshStandardMaterial 
         attribute float paint;
         attribute float flutter;
         attribute float idle;
+        attribute float mottle;
+        varying float vMottle;
+        varying vec2 vMottleXZ;
         ${o.wall ? 'attribute vec3 aWall;' : ''}
         ${o.idle ? 'attribute float aPhase;' : ''}
         ${o.tones ? 'attribute vec3 aTeamLight; attribute vec3 aTeamDark;' : ''}
@@ -285,12 +291,35 @@ export function pieceMaterial(o: PieceMatOpts = {}): THREE.MeshStandardMaterial 
           transformed.z += nod * 0.008 * sin(t * 1.3 + ph + 0.8);
           transformed.x += w * hgt * 0.022 * sin(t * 0.73 + ph * 2.1);
           transformed.z += w * hgt * 0.012 * sin(t * 0.61 + ph * 3.3);` : ''}
+        }
+        {
+          vec4 mwp = vec4(transformed, 1.0);
+          #ifdef USE_INSTANCING
+          mwp = instanceMatrix * mwp;
+          #endif
+          vMottleXZ = (modelMatrix * mwp).xz;
+          vMottle = mottle;
         }`)
     sh.fragmentShader = sh.fragmentShader
       .replace('#include <common>', `#include <common>
         uniform vec3 uGlowColor;
         uniform float uGlowStrength;
-        varying float vGlow;`)
+        varying float vGlow;
+        varying float vMottle;
+        varying vec2 vMottleXZ;
+        float pHash(vec2 p) { vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
+        float pNoise(vec2 p) {
+          vec2 i = floor(p); vec2 f = fract(p); vec2 u = f * f * (3.0 - 2.0 * f);
+          return mix(mix(pHash(i), pHash(i + vec2(1.0, 0.0)), u.x), mix(pHash(i + vec2(0.0, 1.0)), pHash(i + vec2(1.0, 1.0)), u.x), u.y);
+        }`)
+      .replace('#include <color_fragment>', `#include <color_fragment>
+        if (vMottle > 0.001) {
+          // drifts of sage and chartreuse (on lawns), moss and sun-bleach (on roofs)
+          float n1 = pNoise(vMottleXZ * 4.5) * 0.6 + pNoise(vMottleXZ * 10.0 + 7.3) * 0.4;
+          float n2 = pNoise(vMottleXZ * 26.0 + 3.1);
+          vec3 tint = mix(vec3(0.82, 0.95, 0.88), vec3(1.13, 1.07, 0.80), smoothstep(0.28, 0.72, n1));
+          diffuseColor.rgb *= mix(vec3(1.0), tint * (0.93 + 0.14 * n2), vMottle);
+        }`)
       .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
         totalEmissiveRadiance += vGlow * diffuseColor.rgb * uGlowColor * uGlowStrength;`)
   }

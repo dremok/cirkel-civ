@@ -1,12 +1,14 @@
 // Parsing and sanitizing everything a client sends. Nothing from the wire reaches the game
 // without passing through here.
-import type { BuildItem, GameState, PlayerId, PlayerOrders, Stance, UnitOrder } from '../engine/types.ts'
+import { BUILDINGS, PLOT_COUNT } from '../engine/city.ts'
+import type { BuildItem, BuildingType, CityFocus, GameState, PlayerId, PlayerOrders, Stance, UnitOrder, UnitType } from '../engine/types.ts'
 import type { ClientMessage, CreateOptions } from '../shared/protocol.ts'
 
 export class BadRequest extends Error {}
 
 const STANCES = new Set<Stance>(['cautious', 'aggressive', 'hold'])
-const BUILDS = new Set<BuildItem>(['spear', 'archer', 'rider', 'settler', 'walls'])
+const UNIT_BUILDS = new Set<UnitType>(['spear', 'archer', 'rider', 'settler'])
+export const FOCI = new Set<CityFocus>(['growth', 'production', 'balance'])
 const MAP_SIZES = new Set(['small', 'medium', 'large'])
 export const MAX_TURN_SECONDS = 7 * 24 * 3600
 export const MIN_TURN_SECONDS = 5
@@ -101,6 +103,20 @@ function tile(v: unknown, state: GameState, field: string): number {
   return v
 }
 
+/** A unit type or a building on a plot (1..18; the engine checks that it fits), copied; else undefined. */
+export function asBuildItem(v: unknown): BuildItem | undefined {
+  if (typeof v === 'string' && UNIT_BUILDS.has(v as UnitType)) return v as UnitType
+  if (isObj(v) && typeof v.building === 'string' && Object.hasOwn(BUILDINGS, v.building) && isInt(v.plot) && v.plot >= 1 && v.plot < PLOT_COUNT) {
+    return { building: v.building as BuildingType, plot: v.plot }
+  }
+  return undefined
+}
+
+function buildItem(v: unknown, id: string): BuildItem | null {
+  if (v === null) return null
+  return asBuildItem(v) ?? fail(`orders.cities.${id} must be a unit type, {building, plot} or null`)
+}
+
 function unitOrder(v: unknown, state: GameState, id: string): UnitOrder {
   if (!isObj(v)) fail(`orders.units.${id} must be an object`)
   if (!Array.isArray(v.path) || v.path.length > MAX_PATH) fail(`orders.units.${id}.path must be an array of <= ${MAX_PATH} tiles`)
@@ -135,9 +151,18 @@ export function sanitizeOrders(raw: unknown, state: GameState, seat: PlayerId): 
     else dropped++
   }
   for (const [id, v] of Object.entries(cities)) {
-    if (v !== null && (typeof v !== 'string' || !BUILDS.has(v as BuildItem))) fail(`orders.cities.${id} is not a build item`)
-    if (myCities.has(id)) orders.cities[Number(id)] = v as BuildItem | null
+    const item = buildItem(v, id)
+    if (myCities.has(id)) orders.cities[Number(id)] = item
     else dropped++
+  }
+  if (raw.focus !== undefined) {
+    if (!isObj(raw.focus)) fail('orders.focus must be an object')
+    orders.focus = {}
+    for (const [id, f] of Object.entries(raw.focus)) {
+      if (typeof f !== 'string' || !FOCI.has(f as CityFocus)) fail(`orders.focus.${id} must be growth, production or balance`)
+      if (myCities.has(id)) orders.focus[Number(id)] = f as CityFocus
+      else dropped++
+    }
   }
   return { orders, dropped }
 }

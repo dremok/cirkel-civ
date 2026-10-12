@@ -3,7 +3,6 @@
 // always processed in id order.
 
 import {
-  BUILD_COST,
   CITY_MAX_HP,
   CITY_REGEN,
   MIN_CITY_DISTANCE,
@@ -12,8 +11,8 @@ import {
   UNIT_MAX_HP,
 } from './config.ts'
 import {
+  cityCanShoot,
   cityDefense,
-  cityRange,
   cityRangedStrength,
   clashStrength,
   damage,
@@ -23,7 +22,8 @@ import {
   unitRange,
   unitRangedStrength,
 } from './combat.ts'
-import { cityYields, foodSurplus, growthThreshold } from './economy.ts'
+import { BUILDINGS, canPlace, hasBuilding } from './city.ts'
+import { buildCost, foodSurplus, growthNeed, housingOf, outputOf } from './economy.ts'
 import { newCity, newUnit } from './game.ts'
 import { distance, hexCenter, neighbors } from './hex.ts'
 import { scores } from './observe.ts'
@@ -31,7 +31,9 @@ import { moveCost } from './paths.ts'
 import { canStep } from './terrain.ts'
 import type {
   BuildItem,
+  BuildingOrder,
   City,
+  CityFocus,
   GameEvent,
   GameState,
   PlayerId,
@@ -46,7 +48,8 @@ import type {
 
 const MAX_PATH = 64
 const STANCES: readonly Stance[] = ['cautious', 'aggressive', 'hold']
-const BUILD_ITEMS: readonly BuildItem[] = ['spear', 'archer', 'rider', 'settler', 'walls']
+const UNIT_TYPES: readonly string[] = Object.keys(UNITS)
+const FOCI: readonly CityFocus[] = ['growth', 'production', 'balance']
 const HEAL_FIELD = 1
 const HEAL_CITY = 3
 /** A captured city keeps this much health. */
@@ -89,7 +92,11 @@ function cloneState(s: GameState): GameState {
     map: s.map, // immutable, shared
     players: s.players.map((p) => ({ ...p })),
     units: s.units.map((u) => ({ ...u, path: [...u.path] })),
-    cities: s.cities.map((c) => ({ ...c })),
+    cities: s.cities.map((c) => ({
+      ...c,
+      build: c.build && typeof c.build === 'object' ? { ...c.build } : c.build,
+      interior: { ...c.interior, plots: [...c.interior.plots] },
+    })),
   }
 }
 
@@ -154,11 +161,28 @@ class Resolver {
         for (const [key, item] of Object.entries(po.cities)) {
           const c = cityById.get(Number(key))
           if (!c || c.owner !== p.id) continue
-          if (item === null) c.build = null
-          else if (BUILD_ITEMS.includes(item) && !(item === 'walls' && c.walls)) c.build = item
+          const build = this.cleanBuild(c, item)
+          if (build !== undefined) c.build = build
+        }
+      }
+      if (po.focus && typeof po.focus === 'object') {
+        for (const [key, focus] of Object.entries(po.focus)) {
+          const c = cityById.get(Number(key))
+          if (c && c.owner === p.id && FOCI.includes(focus)) c.interior.focus = focus
         }
       }
     }
+  }
+
+  /** A valid build for this city, null to stop building, or undefined to ignore the order. */
+  private cleanBuild(c: City, item: unknown): BuildItem | null | undefined {
+    if (item === null) return null
+    if (typeof item === 'string') return UNIT_TYPES.includes(item) ? (item as BuildItem) : undefined
+    if (!item || typeof item !== 'object') return undefined
+    const { building, plot } = item as Partial<BuildingOrder>
+    if (typeof building !== 'string' || !(building in BUILDINGS) || !Number.isInteger(plot)) return undefined
+    if (!canPlace(this.s.map, c.tile, c.interior, building, plot!).ok) return undefined
+    return { building, plot: plot! }
   }
 
   private applyUnitOrder(L: Live, order: UnitOrder | undefined): void {
@@ -476,7 +500,8 @@ class Resolver {
     const shots: { from: Target; i?: number; target: Target; dmg: number }[] = []
     this.lives.forEach((L) => {
       if (L.dead || L.fired || L.fought || L.u.stance !== 'hold' || !UNITS[L.u.type].ranged) return
-      const target = this.pickUnitTarget(L.u.tile, L.u.owner, unitRange(L.u), L.u.target, (e) => unitRangedStrength(this.s.map, L.u, e.tile))
+      const reach = (tile: TileId) => inRange(this.s.map, L.u.tile, tile, unitRange(L.u))
+      const target = this.pickUnitTarget(L.u.tile, L.u.owner, reach, L.u.target, (e) => unitRangedStrength(this.s.map, L.u, e.tile))
       if (target < 0) return
       L.fired = true
       const E = this.lives[target]
@@ -488,16 +513,15 @@ class Resolver {
 
   /** Index of the enemy unit to shoot from `from`: the preferred tile if it holds a valid target,
    * else the weakest (fewest hp, then most damage taken, then lowest id). -1 if none. */
-  private pickUnitTarget(from: TileId, owner: PlayerId, range: number, prefer: TileId | null, strength: (e: Unit) => number): number {
-    const { map } = this.s
+  private pickUnitTarget(from: TileId, owner: PlayerId, reach: (t: TileId) => boolean, prefer: TileId | null, strength: (e: Unit) => number): number {
     if (prefer !== null) {
       const p = this.unitAt[prefer]
-      if (p >= 0 && this.shootable(p, owner) && inRange(map, from, prefer, range)) return p
+      if (p >= 0 && this.shootable(p, owner) && reach(prefer)) return p
     }
     let best = -1
     let bestDmg = 0
     this.lives.forEach((E, i) => {
-      if (!this.shootable(i, owner) || !inRange(map, from, E.u.tile, range)) return
+      if (!this.shootable(i, owner) || !reach(E.u.tile)) return
       const d = damage(strength(E.u), this.shotDefense(E.u, from))
       const B = best >= 0 ? this.lives[best] : null
       if (!B || E.u.hp < B.u.hp || (E.u.hp === B.u.hp && d > bestDmg)) {
@@ -660,7 +684,7 @@ class Resolver {
           return
         }
       }
-      const j = this.pickUnitTarget(u.tile, u.owner, range, null, (e) => str(e.tile))
+      const j = this.pickUnitTarget(u.tile, u.owner, (tile) => inRange(map, u.tile, tile, range), null, (e) => str(e.tile))
       if (j >= 0) {
         const E = this.lives[j].u
         shots.push({ from: { unit: u.id }, i: j, target: { unit: E.id }, dmg: damage(str(E.tile), this.shotDefense(E, u.tile)) })
@@ -675,7 +699,7 @@ class Resolver {
     })
     for (const c of this.s.cities) {
       if (c.hp <= 0) continue
-      const j = this.pickUnitTarget(c.tile, c.owner, cityRange, null, (e) => cityRangedStrength(map, c, e.tile))
+      const j = this.pickUnitTarget(c.tile, c.owner, (tile) => cityCanShoot(map, c, tile), null, (e) => cityRangedStrength(map, c, e.tile))
       if (j < 0) continue
       const E = this.lives[j].u
       shots.push({ from: { city: c.id }, i: j, target: { unit: E.id }, dmg: damage(cityRangedStrength(map, c, E.tile), this.shotDefense(E, c.tile)) })
@@ -754,41 +778,55 @@ class Resolver {
 
   private economy(t: number): Unit[] {
     const s = this.s
-    const yields = cityYields({ ...s, units: this.lives.filter((L) => !L.dead).map((L) => L.u) })
     const spawned: Unit[] = []
     for (const c of [...s.cities].sort((a, b) => a.id - b.id)) {
-      const y = yields.get(c.id)!
-      c.prod += y.prod
-      if (c.build && c.prod >= BUILD_COST[c.build]) {
-        if (c.build === 'walls') {
-          c.prod -= BUILD_COST.walls
-          c.walls = true
-          c.build = null
-          this.events.push({ t, kind: 'built', city: c.id, item: 'walls' })
-        } else if (c.build !== 'settler' || c.pop >= 2) {
+      const out = outputOf(s.map, c)
+      c.prod += out.prod
+      const item = c.build
+      if (item && c.prod >= buildCost(c, item)) {
+        if (typeof item !== 'string') this.completeBuilding(c, item, t)
+        else if (item !== 'settler' || c.pop >= 2) {
           const tile = this.spawnTile(c)
           if (tile >= 0) {
-            c.prod -= BUILD_COST[c.build]
-            const u = newUnit(s, c.owner, c.build, tile)
+            c.prod -= buildCost(c, item)
+            const u = newUnit(s, c.owner, item, tile)
             spawned.push(u)
             this.unitAt[tile] = -2 // occupied by a new unit (not in `lives`)
+            this.events.push({ t, kind: 'built', city: c.id, item })
             this.events.push({ t, kind: 'spawn', unit: { ...u, path: [] }, city: c.id })
-            if (c.build === 'settler') {
+            if (item === 'settler') {
               c.pop--
               this.events.push({ t, kind: 'grow', city: c.id, pop: c.pop })
             }
           }
         }
       }
-      c.food = Math.max(0, c.food + foodSurplus(c, y))
-      const need = growthThreshold(c.pop)
+      // Growth, up to the housing; a full city keeps at most one citizen's worth of food.
+      c.food = Math.max(0, c.food + foodSurplus(c, out))
+      const need = growthNeed(c, out)
       if (c.food >= need) {
-        c.food -= need
-        c.pop++
-        this.events.push({ t, kind: 'grow', city: c.id, pop: c.pop })
+        if (c.pop < housingOf(c.interior)) {
+          c.food -= need
+          c.pop++
+          this.events.push({ t, kind: 'grow', city: c.id, pop: c.pop })
+        } else c.food = need
       }
     }
     return spawned
+  }
+
+  /** Place a finished building, or report why its plot no longer takes it (the production stays). */
+  private completeBuilding(c: City, order: BuildingOrder, t: number): void {
+    const check = canPlace(this.s.map, c.tile, c.interior, order.building, order.plot)
+    c.build = null
+    if (!check.ok) {
+      this.events.push({ t, kind: 'buildFailed', city: c.id, item: { ...order }, reason: check.reason ?? 'This plot cannot take it.' })
+      return
+    }
+    c.prod -= BUILDINGS[order.building].cost
+    c.interior.plots[order.plot] = order.building
+    c.walls = hasBuilding(c.interior, 'wall')
+    this.events.push({ t, kind: 'built', city: c.id, item: { ...order } })
   }
 
   /** The city tile if free, else the free passable neighbour nearest the middle of the map (ties:

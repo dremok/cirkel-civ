@@ -6,7 +6,7 @@ import * as THREE from 'three'
 import type { GameMap } from '../../../engine/types.ts'
 import type { World, WorldQuality } from '../api.ts'
 import { NATURE } from '../palette.ts'
-import { buildMotes, buildVignette } from './atmosphere.ts'
+import { buildMotes, buildPuffs, buildVignette } from './atmosphere.ts'
 import { buildBirds } from './birds.ts'
 import { BOTTOM_Y, buildLayout } from './layout.ts'
 import { createPicker } from './pick.ts'
@@ -20,9 +20,9 @@ import { buildTerrain } from './terrain.ts'
 import { buildWater } from './water.ts'
 
 const TIERS: Record<WorldQuality, { dpr: number; shadow: number; birds: boolean; post: boolean; minFps: number }> = {
-  ultra: { dpr: 2, shadow: 4096, birds: true, post: true, minFps: 52 },
-  high: { dpr: 2, shadow: 4096, birds: true, post: false, minFps: 45 },
-  medium: { dpr: 1.75, shadow: 2048, birds: true, post: false, minFps: 27 },
+  ultra: { dpr: 2, shadow: 4096, birds: true, post: true, minFps: 45 },
+  high: { dpr: 2, shadow: 4096, birds: true, post: false, minFps: 40 },
+  medium: { dpr: 1.75, shadow: 2048, birds: true, post: false, minFps: 26 },
   low: { dpr: 1.25, shadow: 1024, birds: false, post: false, minFps: 0 },
 }
 const ORDER: WorldQuality[] = ['ultra', 'high', 'medium', 'low']
@@ -41,19 +41,23 @@ export interface WorldOptions {
   intro?: boolean
 }
 
-function detectQuality(): WorldQuality {
+function detectQuality(renderer?: THREE.WebGLRenderer): WorldQuality {
   const coarse = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches
   const small = Math.min(screen.width, screen.height) < 820
   if (coarse && small) return (navigator.hardwareConcurrency ?? 8) <= 4 ? 'low' : 'medium'
+  // Clearly strong GPUs start with the full post chain; the frame-time check steps down if needed.
+  const gl = renderer?.getContext()
+  const info = gl?.getExtension('WEBGL_debug_renderer_info')
+  const name = info && gl ? String(gl.getParameter(info.UNMASKED_RENDERER_WEBGL)) : ''
+  if (/Apple M\d|GeForce|RTX|Radeon RX|Radeon Pro/i.test(name)) return 'ultra'
   return 'high'
 }
 
 export function createWorld(container: HTMLElement, map: GameMap, opts: WorldOptions = {}): World {
-  let quality: WorldQuality = opts.quality && opts.quality !== 'auto' ? opts.quality : detectQuality()
-  let adaptive = !opts.quality || opts.quality === 'auto'
-
   installGrade()
   const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance', stencil: false })
+  let quality: WorldQuality = opts.quality && opts.quality !== 'auto' ? opts.quality : detectQuality(renderer)
+  let adaptive = !opts.quality || opts.quality === 'auto'
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, TIERS[quality].dpr))
   renderer.setSize(container.clientWidth, container.clientHeight)
   renderer.outputColorSpace = THREE.SRGBColorSpace
@@ -124,6 +128,8 @@ export function createWorld(container: HTMLElement, map: GameMap, opts: WorldOpt
   scene.add(motes.points)
   const vignette = buildVignette()
   scene.add(vignette.mesh)
+  const puffs = buildPuffs(layout, BOTTOM_Y)
+  scene.add(puffs.mesh)
 
   const drawSize = new THREE.Vector2()
   let post: ReturnType<typeof createPost> | null = null
@@ -176,6 +182,7 @@ export function createWorld(container: HTMLElement, map: GameMap, opts: WorldOpt
     shared.uTime.value = time
     shared.uCloudOffset.value.set(time * 0.012, time * 0.006)
     rig.update(dt)
+    post?.setZoom(rig.goal.dist)
     sky.update(camera, time)
     // A gentle haze toward the far side: at most ~12 % at the far rim, at any zoom.
     const d = camera.position.distanceTo(center)
@@ -201,7 +208,7 @@ export function createWorld(container: HTMLElement, map: GameMap, opts: WorldOpt
     if (perfWarm < 2.5) return
     perfT += raw
     perfN++
-    if (perfT < 2) return
+    if (perfT < 3) return
     const fps = perfN / perfT
     perfT = 0
     perfN = 0
@@ -278,7 +285,7 @@ export function createWorld(container: HTMLElement, map: GameMap, opts: WorldOpt
     },
     setQuality(q) {
       adaptive = q === 'auto'
-      quality = q === 'auto' ? detectQuality() : q
+      quality = q === 'auto' ? detectQuality(renderer) : q
       perfWarm = 0
       applyQuality()
     },
@@ -297,6 +304,7 @@ export function createWorld(container: HTMLElement, map: GameMap, opts: WorldOpt
       birds.dispose()
       motes.dispose()
       vignette.dispose()
+      puffs.dispose()
       sky.dispose()
       post?.dispose()
       env?.dispose()

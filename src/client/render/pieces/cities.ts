@@ -8,17 +8,26 @@ import { AXIAL_DIRS, SQRT3 } from '../../../engine/hex.ts'
 import { type BuildingType, type CityInterior, PLOTS, fortifiedSides, neighborInDir } from '../../../engine/city.ts'
 import { CITY_MAX_HP } from '../../../engine/config.ts'
 import type { Biome, City, CityId, GameMap, GameState, PlayerId, TileId } from '../../../engine/types.ts'
-import { type CityVariant, RING_R, WALL_IN, barnIsFalu, cityModel, plasterFor } from './cityModels.ts'
+import { type CityVariant, ROOFS, RING_R, WALL_IN, barnIsFalu, cityModel, hueClash, plasterFor } from './cityModels.ts'
 import { type Board, clamp01, colorIndexOf, easeOutBack, easeOutCubic, hash01, teamColors } from './common.ts'
 import type { Fx } from './fx.ts'
-import { Batch } from './gfx.ts'
+import { Batch, billboardQuad, spriteMaterial, textures } from './gfx.ts'
 import { pieceMaterial } from './kit.ts'
 import type { Label, Labels } from './labels.ts'
 
 export const PLAZA_Y = 0.014
 
-const TERRACOTTA = new THREE.Color('#C2643F')
-const SLATE = new THREE.Color('#6E7686')
+/** A roof for an ordinary building: seeded from the curated mix, rarely the player's dark tone. */
+function roofPicker(team: THREE.Color, rnd: () => number): () => Spec['roof'] {
+  const list = ROOFS.map((r) => ({ c: r.color, w: r.weight * (hueClash(r.color, team) ? 0.12 : 1) }))
+  const total = list.reduce((a, b) => a + b.w, 0)
+  return () => {
+    if (rnd() < 0.1) return 'dark'
+    let x = rnd() * total
+    for (const r of list) if ((x -= r.w) <= 0) return r.c
+    return list[0].c
+  }
+}
 
 const INNER_R = 0.5
 const CORNER_R = 0.715 // outer plots facing one neighbour (towards an edge midpoint)
@@ -27,9 +36,9 @@ const SIDE_R = 0.785 // outer plots facing two neighbours (towards a tile corner
 const ALL_VARIANTS: CityVariant[] = [
   'cottage', 'thatched', 'townhouse', 'longhouse', 'hiphouse', 'tallhouse', 'keep', 'hall', 'temple', 'market', 'workshop', 'barracks',
   'farmWheat', 'farmGreens', 'farmFlowers', 'farmWheatTar', 'sawmill', 'jetty', 'stairs', 'boat', 'wall', 'gate', 'tower',
-  'ground', 'lanterns', 'road', 'well', 'linden', 'blossom', 'bushes', 'garden',
+  'ground', 'lanterns', 'road', 'well', 'linden', 'blossom', 'bushes', 'garden', 'flowerbed', 'hedge',
 ]
-const FLAT: Set<CityVariant> = new Set(['ground', 'road', 'garden'])
+const FLAT: Set<CityVariant> = new Set(['ground', 'road', 'garden', 'flowerbed'])
 const OUTSIDE: Set<CityVariant> = new Set(['jetty', 'stairs', 'boat'])
 const CAPACITY: Partial<Record<CityVariant, number>> = { cottage: 640, thatched: 400, townhouse: 640, hiphouse: 640, longhouse: 400, tallhouse: 400, wall: 400, tower: 400 }
 
@@ -78,6 +87,8 @@ export interface CityVis {
   toTones: { base: THREE.Color; light: THREE.Color; dark: THREE.Color }
   sweep: number
   smoke: { at: THREE.Vector3; t: number; key: string }[]
+  /** Soft glows around lanterns. */
+  halos: { slot: number; at: THREE.Vector3; key: string; phase: number }[]
   plaque: Label
   popEl: HTMLElement
   hpEl: HTMLElement
@@ -135,6 +146,7 @@ export function planCity(board: Board, map: GameMap, city: City, team: THREE.Col
   const plaster = () => plasterFor(team, rnd())
   const neutralPlaster = plasterFor(team, 0)
   const falu = barnIsFalu(team)
+  const roofOf = roofPicker(team, rnd)
   let order = 1
   const push = (s: Omit<Spec, 'wall' | 'shade' | 'order' | 'y' | 's'> & Partial<Spec>) =>
     out.push({ y: 0, s: 1, wall: neutralPlaster, shade: 1, order: order++, ...s })
@@ -154,15 +166,12 @@ export function planCity(board: Board, map: GameMap, city: City, team: THREE.Col
     let v: CityVariant
     if (ring === 1) v = w < 0.3 ? 'townhouse' : w < 0.52 ? 'tallhouse' : w < 0.75 ? 'hiphouse' : 'cottage'
     else v = w < 0.28 ? 'cottage' : w < 0.46 ? 'thatched' : w < 0.62 ? 'longhouse' : w < 0.8 ? 'hiphouse' : 'townhouse'
-    // roofs mostly in the player's tones, now and then terracotta or slate
-    const r = rnd()
-    const roof: Spec['roof'] = r < 0.42 ? 'base' : r < 0.6 ? 'light' : r < 0.78 ? 'dark' : r < 0.9 ? TERRACOTTA : SLATE
-    atPlot(i, v, { key: `house:${i}`, shade: 0.94 + rnd() * 0.12, s: 0.94 + rnd() * 0.12, roof })
+    atPlot(i, v, { key: `house:${i}`, shade: 0.93 + rnd() * 0.14, s: 0.94 + rnd() * 0.12, roof: roofOf() })
   }
   const farm = (i: number) => {
     const c = rnd()
     const v: CityVariant = !falu ? (c < 0.6 ? 'farmWheatTar' : 'farmGreens') : c < 0.5 ? 'farmWheat' : c < 0.8 ? 'farmGreens' : 'farmFlowers'
-    atPlot(i, v, { key: `farm:${i}`, out: true, dr: PLOTS[i].facing.length === 1 ? -0.025 : -0.005, s: 0.9 })
+    atPlot(i, v, { key: `farm:${i}`, out: true, dr: PLOTS[i].facing.length === 1 ? -0.025 : -0.005, s: 0.9, roof: roofOf() })
   }
   const harbour = (i: number) => {
     // the plot's water-facing side; the jetty runs out from the tile edge over the water
@@ -181,14 +190,14 @@ export function planCity(board: Board, map: GameMap, city: City, team: THREE.Col
     const bz = Math.sin(a) * (edge + 0.27) + Math.cos(a) * side
     push({ key: `boat:${i}`, v: 'boat', x: bx, z: bz, y: waterY + 0.012, yaw: yaw + 0.15, bob: rnd() * 6 })
     // a boathouse-ish cottage by the water on the plot itself
-    atPlot(i, 'cottage', { key: `harbourhouse:${i}`, dr: -0.04, shade: 0.9, s: 0.85 })
+    atPlot(i, 'cottage', { key: `harbourhouse:${i}`, dr: -0.04, shade: 0.95, s: 0.85, roof: roofOf() })
   }
   const building = (i: number, b: BuildingType) => {
     switch (b) {
       case 'house': house(i); break
       case 'farm': farm(i); break
-      case 'sawmill': atPlot(i, 'sawmill', { out: true, dr: 0.01 }); break
-      case 'workshop': atPlot(i, 'workshop'); break
+      case 'sawmill': atPlot(i, 'sawmill', { out: true, dr: 0.01, roof: roofOf() }); break
+      case 'workshop': atPlot(i, 'workshop', { roof: roofOf() }); break
       case 'market': atPlot(i, 'market'); break
       case 'harbor': harbour(i); break
       case 'barracks': atPlot(i, 'barracks'); break
@@ -228,7 +237,7 @@ export function planCity(board: Board, map: GameMap, city: City, team: THREE.Col
     roads = roads.sort((a, b) => Math.sin(dirAngle(b)) - Math.sin(dirAngle(a))).slice(0, 2)
     // flowering bushes on a couple of empty outer plots (greenery only; the plots stay free)
     const empty = Array.from({ length: 12 }, (_, k) => k + 7).filter((i) => !interior.plots[i] && !roads.some((d) => PLOTS[i].facing.length === 1 && PLOTS[i].facing[0] === d))
-    const greens: CityVariant[] = ['bushes', 'linden', 'bushes', 'blossom']
+    const greens: CityVariant[] = ['bushes', 'linden', 'flowerbed', 'blossom', 'hedge', 'garden']
     for (let k = 0; k < Math.min(4, empty.length); k++) {
       const i = empty[Math.floor(rnd() * empty.length)]
       const v = greens[Math.floor(rnd() * greens.length)]
@@ -265,7 +274,7 @@ export function planCity(board: Board, map: GameMap, city: City, team: THREE.Col
       .sort((a, b) => Math.sin(plotAt(b).a) - Math.sin(plotAt(a).a))
     const fields = Math.min(farmland.length, 1 + Math.floor(P / 3))
     for (let k = 0; k < fields; k++) take(farmland[k], farm)
-    if (P >= 3) take(outer.find((i) => !used.has(i) && faces(i).some((b) => b === 'forest' || b === 'hills')), (i) => atPlot(i, 'sawmill', { out: true, dr: 0.01 }))
+    if (P >= 3) take(outer.find((i) => !used.has(i) && faces(i).some((b) => b === 'forest' || b === 'hills')), (i) => atPlot(i, 'sawmill', { out: true, dr: 0.01, roof: roofOf() }))
     // houses: inner first (back to front), then outer (back to front)
     const houses = Math.round(1 + P * 1.5) + (city.capital ? 1 : 0)
     const order2 = [...inner, ...outer.filter((i) => !used.has(i)).sort((a, b) => Math.sin(plotAt(a).a) - Math.sin(plotAt(b).a) + (rnd() - 0.5) * 0.4)]
@@ -281,7 +290,8 @@ export function planCity(board: Board, map: GameMap, city: City, team: THREE.Col
     const greens = Math.min(empty.length, 2 + Math.floor(P / 4))
     for (let k = 0; k < greens; k++) {
       const i = empty[Math.floor(rnd() * empty.length)]
-      take(i, (j) => atPlot(j, rnd() < 0.5 ? 'garden' : 'bushes', { key: `green:${j}`, dr: rnd() * 0.03 }))
+      const kinds: CityVariant[] = ['garden', 'bushes', 'flowerbed', 'hedge']
+      take(i, (j) => atPlot(j, kinds[Math.floor(rnd() * kinds.length)], { key: `green:${j}`, dr: rnd() * 0.03 }))
     }
     push({ key: 'centre', v: centre, x: Math.cos(centreA) * 0.45, z: Math.sin(centreA) * 0.45, yaw: rnd() * 6 })
   }
@@ -316,6 +326,7 @@ export function planCity(board: Board, map: GameMap, city: City, team: THREE.Col
 export class CityLayer {
   readonly cities = new Map<CityId, CityVis>()
   private batches = new Map<CityVariant, Batch>()
+  private halos: Batch
   private m = new THREE.Matrix4()
   private q = new THREE.Quaternion()
   private v = new THREE.Vector3()
@@ -331,6 +342,11 @@ export class CityLayer {
     groundMat.polygonOffset = true
     groundMat.polygonOffsetFactor = -1
     groundMat.polygonOffsetUnits = -2
+    this.halos = new Batch(root, [{
+      geo: billboardQuad(),
+      mat: spriteMaterial({ map: textures().blob, billboard: true, tint: '#FFC37A', blending: THREE.AdditiveBlending, depthBias: 0.04 }),
+      order: 9,
+    }], 512, { aAlpha: 1 })
     for (const v of ALL_VARIANTS) {
       const model = cityModel(v)
       const flatV = FLAT.has(v)
@@ -387,7 +403,7 @@ export class CityLayer {
     const vis: CityVis = {
       id: city.id, owner: city.owner, colorIdx, tile: city.tile, name: city.name, pop: city.pop, hp: city.hp,
       walls: city.walls, capital: city.capital, planKey: '', pieces: new Map(),
-      fromColor: tc.base.clone(), toColor: tc.base.clone(), fromTones: tc, toTones: tc, sweep: 1, smoke: [], plaque, popEl, hpEl, shown: !animate, dirty: true,
+      fromColor: tc.base.clone(), toColor: tc.base.clone(), fromTones: tc, toTones: tc, sweep: 1, smoke: [], halos: [], plaque, popEl, hpEl, shown: !animate, dirty: true,
     }
     this.cities.set(city.id, vis)
     this.replan(map, city, animate)
@@ -438,7 +454,26 @@ export class CityLayer {
       vis.pieces.set(key3, piece)
     }
     this.pickSmoke(vis)
+    this.pickHalos(vis)
     vis.dirty = true
+  }
+
+  private pickHalos(vis: CityVis) {
+    for (const h of vis.halos) this.halos.release(h.slot)
+    vis.halos = []
+    const top = this.board.tops[vis.tile]
+    for (const p of vis.pieces.values()) {
+      if (p.target !== 1) continue
+      const a = cityModel(p.spec.v).anchors.halo
+      if (!a) continue
+      for (const pt of a) {
+        const sc = typeof p.spec.s === 'number' ? p.spec.s : p.spec.s[0]
+        const w = pt.clone().multiplyScalar(sc * this.board.R).applyAxisAngle(this.axisY, p.spec.yaw)
+        w.add(new THREE.Vector3(top.x + p.spec.x * this.board.R, top.y + p.spec.y, top.z + p.spec.z * this.board.R))
+        const slot = this.halos.alloc()
+        if (slot >= 0) vis.halos.push({ slot, at: w, key: p.spec.key, phase: hash01(vis.id * 97 + vis.halos.length, 9) * 6.28 })
+      }
+    }
   }
 
   private pickSmoke(vis: CityVis) {
@@ -464,6 +499,7 @@ export class CityLayer {
     const vis = this.cities.get(id)
     if (!vis) return
     for (const p of vis.pieces.values()) this.batches.get(p.spec.v)!.release(p.slot)
+    for (const h of vis.halos) this.halos.release(h.slot)
     this.labels.remove(vis.plaque)
     this.cities.delete(id)
   }
@@ -560,6 +596,14 @@ export class CityLayer {
         vis.plaque.el.style.opacity = ''
       }
       if (vis.dirty || animating) this.write(vis)
+      for (const h of vis.halos) {
+        const piece = vis.pieces.get(h.key)
+        const r = piece ? piece.rise : 0
+        const flicker = 0.85 + 0.1 * Math.sin(this.time * 2.3 + h.phase) + 0.05 * Math.sin(this.time * 7.1 + h.phase * 2)
+        this.m.compose(h.at, this.q.identity(), this.s.setScalar(0.13 * this.board.R))
+        this.halos.setMatrix(h.slot, this.m)
+        this.halos.setExtra('aAlpha', h.slot, 0.32 * r * r * flicker)
+      }
       for (const sm of vis.smoke) {
         sm.t -= dt
         if (sm.t <= 0) {
@@ -570,6 +614,7 @@ export class CityLayer {
       }
     }
     for (const b of this.batches.values()) b.commit()
+    this.halos.commit()
   }
 
   private write(vis: CityVis) {
@@ -642,5 +687,6 @@ export class CityLayer {
   dispose(): void {
     for (const id of [...this.cities.keys()]) this.remove(id)
     for (const b of this.batches.values()) b.dispose()
+    this.halos.dispose()
   }
 }

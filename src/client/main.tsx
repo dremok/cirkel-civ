@@ -9,11 +9,15 @@ import './styles/play.css'
 import './styles/doc.css'
 import { setTransport } from './net/connection.ts'
 import { App } from './ui/App.tsx'
+import { audio } from './audio/index.ts'
 
 // `?local` runs the game in this tab against an in-browser server (for development and tests).
 if (new URLSearchParams(location.search).has('local')) {
   const { LocalServer } = await import('./net/local.ts')
   setTransport(new LocalServer())
 }
+
+// Dev only: lets test scripts check what the game asks the audio module to play.
+if (import.meta.env.DEV) (window as unknown as { __audio: unknown }).__audio = audio
 
 createRoot(document.getElementById('root')!).render(<App />)

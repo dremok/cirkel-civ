@@ -1,4 +1,5 @@
-import { useState, type CSSProperties } from 'react'
+import { useEffect, useState, type CSSProperties } from 'react'
+import { audio } from '../audio/index.ts'
 import type { SeatInfo } from '../../shared/protocol.ts'
 import type { GameSession, GameSnapshot } from '../net/session.ts'
 import { getName, setName as storeName } from '../net/storage.ts'
@@ -21,6 +22,10 @@ export function Lobby({ session, snap }: { session: GameSession; snap: GameSnaps
   const [name, setName] = useState(getName)
   const [copied, setCopied] = useState(false)
   const [help, setHelp] = useState(false)
+  useEffect(() => {
+    audio.music(null)
+    audio.ambience('meadow')
+  }, [])
   const url = gameUrl(g.id)
   const seated = snap.seat !== null && g.seats[snap.seat]?.kind === 'human'
   const openSeats = g.seats.filter((s) => s.kind === 'open').length
@@ -33,11 +38,13 @@ export function Lobby({ session, snap }: { session: GameSession; snap: GameSnaps
       return
     }
     storeName(n)
+    audio.ui('confirm')
     session.join(n)
   }
 
   const copy = async () => {
     if (await copyText(url)) {
+      audio.ui('tap')
       setCopied(true)
       setTimeout(() => setCopied(false), 1800)
     } else toast('Could not copy the link.')
@@ -105,7 +112,13 @@ export function Lobby({ session, snap }: { session: GameSession; snap: GameSnaps
         {!seated && openSeats === 0 && <p className="muted center">The game is full. You can watch once it starts.</p>}
         {seated && snap.host && (
           <>
-            <button className="btn btn-primary btn-block" onClick={() => session.start()}>
+            <button
+              className="btn btn-primary btn-block"
+              onClick={() => {
+                audio.ui('confirm')
+                session.start()
+              }}
+            >
               Start game
             </button>
             <p className="muted center small">
