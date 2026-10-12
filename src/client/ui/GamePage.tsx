@@ -1,5 +1,6 @@
 import { lazy, Suspense, useEffect, useState, useSyncExternalStore } from 'react'
 import { GameSession } from '../net/session.ts'
+import { clearAutostart, isAutostart } from '../net/storage.ts'
 import { Lobby } from './Lobby.tsx'
 
 // The 3D play screen (three.js) is its own chunk, so the home page stays light on phones.
@@ -21,6 +22,10 @@ export function GamePage({ gameId }: { gameId: string }) {
 
 function GameScreen({ session }: { session: GameSession }) {
   const snap = useSyncExternalStore(session.subscribe, session.getSnapshot)
+  const started = !!snap.view && (!snap.summary || snap.summary.phase !== 'lobby')
+  useEffect(() => {
+    if (started) clearAutostart(session.gameId)
+  }, [started, session.gameId])
   if (snap.missing) {
     return (
       <div className="center-screen">
@@ -30,7 +35,8 @@ function GameScreen({ session }: { session: GameSession }) {
       </div>
     )
   }
-  const started = snap.view && (!snap.summary || snap.summary.phase !== 'lobby')
+  // A game against bots starts the moment it is created: show the loader, not the lobby.
+  const autostart = isAutostart(session.gameId)
   if (started) {
     return (
       <Suspense fallback={<Waiting text="Building the world…" />}>
@@ -38,7 +44,8 @@ function GameScreen({ session }: { session: GameSession }) {
       </Suspense>
     )
   }
-  if (snap.summary) return <Lobby session={session} snap={snap} />
+  // The lobby is only for the lobby phase: once a game has started, its state follows the summary.
+  if (snap.summary?.phase === 'lobby' && !autostart) return <Lobby session={session} snap={snap} />
   return <Waiting text={snap.status === 'open' ? 'Loading the game…' : 'Connecting…'} />
 }
 

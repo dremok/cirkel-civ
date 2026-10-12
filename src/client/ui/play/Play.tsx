@@ -10,7 +10,9 @@ import { PLAYERS } from '../../render/palette.ts'
 import { connection } from '../../net/connection.ts'
 import { errorText } from '../../net/errors.ts'
 import type { GameSession, GameSnapshot } from '../../net/session.ts'
-import { getFlag, getName, getQuality, getSeenTurn, setFlag, setQuality, setSeatToken, setSeenTurn } from '../../net/storage.ts'
+import {
+  getFlag, getName, getQuality, getSeenTurn, markAutostart, setFlag, setQuality, setSeatToken, setSeenTurn,
+} from '../../net/storage.ts'
 import { HelpSheet } from '../HelpSheet.tsx'
 import { gameHash, gameUrl, go } from '../route.ts'
 import { shareLink } from '../share.ts'
@@ -79,7 +81,9 @@ export function Play({ session, snap }: { session: GameSession; snap: GameSnapsh
   latest.current = msg
 
   const [sheet, setSheet] = useState<'menu' | 'help' | 'scores' | 'end' | null>(() => (getFlag('help') ? null : 'help'))
-  // A quiet "Tur 6" beat when a new planning phase begins.
+  const sheetRef = useRef(sheet)
+  sheetRef.current = sheet
+  // A quiet "Turn 6" beat when a new planning phase begins.
   const [banner, setBanner] = useState<{ turn: number; key: number } | null>(null)
   const showBanner = useCallback((turn: number) => setBanner({ turn, key: Date.now() }), [])
   const [optimisticReady, setOptimisticReady] = useState<boolean | null>(null)
@@ -293,9 +297,11 @@ export function Play({ session, snap }: { session: GameSession; snap: GameSnapsh
     const other = unitAt(state, dest)
     if (other && other.owner === me) return null
     if (mySelUnit.type === 'archer' && isEnemyAt(state, me!, dest)) return null
+    const o = unitOrder(draft, mySelUnit)
+    // Pointing at the destination it already has: show the order itself, not a preview of it.
+    if (pending === null && o.path.length && o.path[o.path.length - 1] === dest) return null
     const path = safeFindPath(state, mySelUnit.id, dest)
     if (!path) return null
-    const o = unitOrder(draft, mySelUnit)
     return {
       steps: planSteps(state, mySelUnit.id, path),
       kind: isEnemyAt(state, me!, dest) ? 'attack' : mySelUnit.type === 'settler' && o.found ? 'found' : 'move',
@@ -633,10 +639,19 @@ export function Play({ session, snap }: { session: GameSession; snap: GameSnapsh
     if (finished && !playing && !endShown.current) {
       endShown.current = true
       setSheet('end')
-      // Opened on a finished game (no replay of the last turn): play the closing phrase here.
+      // Opened on a finished game (no replay of the last turn): play the closing phrase here,
+      // or on the first tap if audio is still locked.
       if (!stung.current && me !== null && state.winner !== 'draw') {
         stung.current = true
-        audio.sting(state.winner === me ? 'victory' : 'defeat', 0.3)
+        const kind = state.winner === me ? 'victory' : 'defeat'
+        if (audio.unlocked) audio.sting(kind, 0.3)
+        else {
+          const off = audio.subscribe(() => {
+            if (!audio.unlocked) return
+            off()
+            if (sheetRef.current === 'end') audio.sting(kind, 0.3)
+          })
+        }
       }
     }
   }, [finished, playing])
@@ -728,6 +743,7 @@ export function Play({ session, snap }: { session: GameSession; snap: GameSnapsh
       if (m.type === 'joined') {
         off()
         setSeatToken(m.gameId, { token: m.token, seat: m.seat })
+        markAutostart(m.gameId)
         conn.send({ type: 'start' })
         go(gameHash(m.gameId))
       }

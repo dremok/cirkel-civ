@@ -3,7 +3,7 @@ import type { CreateOptions, GameSummary, ServerMessage } from '../../shared/pro
 import { audio } from '../audio/index.ts'
 import { connection } from '../net/connection.ts'
 import { errorText } from '../net/errors.ts'
-import { getName, getSeatToken, setName as storeName, setSeatToken } from '../net/storage.ts'
+import { getName, getSeatToken, markAutostart, setName as storeName, setSeatToken } from '../net/storage.ts'
 import { PLAYERS } from '../render/palette.ts'
 import { Emblem } from './Emblem.tsx'
 import { loadPlay } from './GamePage.tsx'
@@ -38,7 +38,11 @@ export function Home() {
       if (m.type === 'games') setGames(m.games)
       if (m.type === 'joined' && pendingRef.current) {
         setSeatToken(m.gameId, { token: m.token, seat: m.seat })
-        if (pendingRef.current.bot) conn.send({ type: 'start' })
+        if (pendingRef.current.bot) {
+          // Starts right away: the game page shows the loader, not a flash of the lobby.
+          markAutostart(m.gameId)
+          conn.send({ type: 'start' })
+        }
         setPending(null)
         go(gameHash(m.gameId))
       }

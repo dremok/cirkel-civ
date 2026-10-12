@@ -74,3 +74,17 @@ export function getQuality(): QualityChoice {
 export function setQuality(q: QualityChoice): void {
   set('quality', q === 'auto' ? null : q)
 }
+
+/** A game created to start at once (against bots): skip its lobby for a few seconds. */
+export function markAutostart(gameId: string): void {
+  set(`autostart:${gameId}`, String(Date.now()))
+}
+
+export function isAutostart(gameId: string): boolean {
+  const t = Number(get(`autostart:${gameId}`) ?? 0)
+  return Date.now() - t < 15_000
+}
+
+export function clearAutostart(gameId: string): void {
+  set(`autostart:${gameId}`, null)
+}
