@@ -1,30 +1,31 @@
 # PROJECT_STATUS
 
-*Last updated: 2026-10-12 03:00*
+*Last updated: 2026-10-13 01:35*
 
 ## Where this is
 
-- Spec v0.1 (SPEC.md, English) and the rules (docs/RULES.md).
-- First demo nearly integrated, built by parallel agents on a shared contract. Committed so far:
-  - Engine: simultaneous resolution, combat, economy, pathfinding, bot, observation, sim, gym, 60
-    tests, seat balance about 50/50, about 11k resolved turns/s.
-  - Server: rooms, seats, tokens, WebSocket protocol, JSON persistence, static serving.
-  - UI (English): home, lobby, play screen, planning, replay log, end screen, reconnect, drafts.
-  - World art round 2: floating diorama over a cloud sea, blended hues, rich flora, phone camera.
-  - Pieces round 2: detailed miniatures, cities built from their 19-plot interiors, replay.
-  - Sound: SFX, ambience and music with a WebAudio engine.
-- In progress: city interior in the engine (buildings drive the economy, directional walls and
-  towers, bot building, save migration), the city view (CityScreen), world and pieces polish
-  rounds (colour variety, close-up detail).
+- Spec v0.3 (SPEC.md) and the rules (docs/RULES.md), both in English.
+- Engine: simultaneous resolution, combat, economy, city interiors (19 plots, buildings, directional
+  walls and towers), pathfinding, bot, observation, sim, gym. 101 tests, seat balance about 50/50.
+- Server: rooms, seats, tokens, WebSocket protocol, JSON persistence with typed save migrations
+  (schema v3), static serving.
+- Client: home, lobby, play screen, planning, replay log, city view, end screen; diorama world,
+  painted miniatures, sound and music.
+- **Fog of war (v0.3, SPEC.md §7b):** the map starts under a cloud sea and is discovered tick by
+  tick. Units see 2 tiles, cities 3, +1 on hills; height and forest block the line of sight; with
+  fog, shooters need a line of sight. Land out of sight is veiled; rival cities there are shown as
+  last seen. Each player gets their own view and replay stream (spotted / lost / explore events).
+  Bots play by the same view and scout. Optional per game, on by default; old saves keep no fog;
+  running fog games cannot be watched by spectators. Two new sounds (clouds parting, enemy spotted).
 
 ## Live
 
-First demo deployed 2026-10-12 (commit 8e9a3e1): https://cirkel-civ-production.up.railway.app.
-Verified end to end on production, desktop and phone: bot game, turns and replays, city view, no
-console errors. 82 tests pass.
+https://cirkel-civ-production.up.railway.app. Fog of war deployed 2026-10-13 (commit 0a0525f),
+verified end to end on desktop and phone before deploying (vs-bot fog games, replays, no console
+errors).
 
 ## Next
 
-1. Feedback from players.
-2. Open design question: victory conditions (SPEC.md §10.5).
-3. Polish in flight: desktop opening framing, world close-up detail, phone home-framing bug.
+1. Feedback from players on fog of war.
+2. Open design questions: victory conditions (SPEC.md §10.5), scouting (§10.2).
+3. Polish: cloud billows are a little regular; check the fog look on real phones.
