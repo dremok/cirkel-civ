@@ -22,6 +22,10 @@ export const fogShared = {
   uFogTiles: { value: null as THREE.Texture | null },
   uFogDims: { value: new THREE.Vector2(1, 1) },
   uFogOn: { value: 0 },
+  /** The cloud sea's cover field (see clouds.ts): props whose base lies under the bank's soft edge
+   * on known edge tiles shrink away, so nothing stands up out of a wisp. */
+  uCloudCover: { value: null as THREE.Texture | null },
+  uCloudRect: { value: new THREE.Vector4(0, 0, 1, 1) },
 }
 
 /** Where unexplored land collapses to, under the clouds, so nothing of its shape survives. */
@@ -54,7 +58,21 @@ function fogVertex(mode: FogMode): string {
         else transformed.y = mix(${FLOOR}, transformed.y, eT);
       }`
   }
-  if (mode === 'instanced') return 'vFog = fogAt(aTile);\ntransformed *= smoothstep(0.55, 1.0, vFog.b);'
+  if (mode === 'instanced') {
+    return /* glsl */ `
+      vFog = fogAt(aTile);
+      {
+        float grow = smoothstep(0.55, 1.0, vFog.b);
+        #ifdef USE_INSTANCING
+          if (uFogOn > 0.5) {
+            vec2 cb = instanceMatrix[3].xz;
+            float cv = texture2D(uCloudCover, (cb - uCloudRect.xy) * uCloudRect.zw).r;
+            grow *= 1.0 - smoothstep(0.1, 0.2, cv);
+          }
+        #endif
+        transformed *= grow;
+      }`
+  }
   // The plain rock skirt that stands in for unexplored columns at the board's edge (it goes once the
   // real column has fully risen).
   if (mode === 'skirt') return 'vFog = vec4(1.0);\nif (fogAt(aTile).b > 0.999 || uFogOn < 0.5) transformed = vec3(0.0);'
@@ -64,7 +82,7 @@ function fogVertex(mode: FogMode): string {
 type FogMode = 'terrain' | 'instanced' | 'surface' | 'skirt'
 
 function fogVertexDecl(mode: FogMode): string {
-  return `${FOG_FN}\nattribute float aTile;\nvarying vec4 vFog;${mode === 'terrain' ? '\nattribute float aNb;\nattribute float aLow;' : ''}`
+  return `${FOG_FN}\nattribute float aTile;\nvarying vec4 vFog;${mode === 'terrain' ? '\nattribute float aNb;\nattribute float aLow;' : ''}${mode === 'instanced' ? '\nuniform sampler2D uCloudCover;\nuniform vec4 uCloudRect;' : ''}`
 }
 
 /** The veil over known land out of sight: evening shade on the same land. Most of the hue stays;

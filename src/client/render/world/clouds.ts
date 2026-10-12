@@ -10,7 +10,7 @@ import { neighbors } from '../../../engine/hex.ts'
 import type { WorldQuality } from '../api.ts'
 import { NATURE } from '../palette.ts'
 import { hexSdf, tileAtPoint, type Layout } from './layout.ts'
-import { FOG_FLOOR, GLSL_NOISE, shared } from './shading.ts'
+import { FOG_FLOOR, GLSL_NOISE, fogShared, shared } from './shading.ts'
 
 /** Coverage texels per world unit. */
 const RES = 6
@@ -355,6 +355,8 @@ export function buildClouds(layout: Layout, quality: WorldQuality, sunDir: THREE
   cover.generateMipmaps = true
   cover.wrapS = cover.wrapT = THREE.ClampToEdgeWrapping
   cover.needsUpdate = true
+  fogShared.uCloudCover.value = cover
+  fogShared.uCloudRect.value.set(x0, z0, RES / w, RES / h)
 
   // The sheet itself: a grid over the board and the drape margin.
   const perUnit = quality === 'low' ? 5 : quality === 'medium' ? 7.5 : 8
@@ -414,6 +416,7 @@ export function buildClouds(layout: Layout, quality: WorldQuality, sunDir: THREE
     dispose() {
       geo.dispose()
       mat.dispose()
+      if (fogShared.uCloudCover.value === cover) fogShared.uCloudCover.value = null
       cover.dispose()
     },
   }
