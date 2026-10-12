@@ -1,5 +1,6 @@
 // Audio sandbox: /sandbox/audio.html. Every sound, the buses, music, ambience and fake replays.
 import { audio, type AmbienceKind, type MusicChoice, type ReplayAudio, type SfxSound, type UiSound, type VolumeBus } from '../audio/index.ts'
+import { newInterior } from '../../engine/city.ts'
 import type { City, GameEvent, GameState, Unit, UnitType } from '../../engine/types.ts'
 
 const $ = (id: string) => document.getElementById(id)!
@@ -72,7 +73,7 @@ const panOf = (t: number) => ((t % W) / (W - 1)) * 2 - 1
 
 let nextId = 1
 const unit = (owner: number, type: UnitType, at: number): Unit => ({ id: nextId++, owner, type, tile: at, hp: 10, stance: 'cautious', path: [], found: false, target: null })
-const city = (owner: number, at: number, name: string): City => ({ id: nextId++, owner, name, tile: at, pop: 3, food: 0, prod: 0, hp: 20, walls: false, build: null, capital: false, founded: 1 })
+const city = (owner: number, at: number, name: string): City => ({ id: nextId++, owner, name, tile: at, pop: 3, food: 0, prod: 0, hp: 20, walls: false, build: null, capital: false, founded: 1, interior: newInterior() })
 const state = (units: Unit[], cities: City[] = []) => ({ units, cities }) as unknown as GameState
 
 function skirmish() {
@@ -112,6 +113,7 @@ function bigMarch() {
 
 function siege() {
   const c = city(1, tile(7, 4), 'Granby')
+  const hold = city(1, tile(9, 7), 'Borg')
   const us = [unit(0, 'spear', tile(5, 4)), unit(0, 'rider', tile(5, 5)), unit(0, 'archer', tile(4, 4))]
   const ev: GameEvent[] = [
     { t: 1, kind: 'move', unit: us[0].id, from: tile(5, 4), to: tile(6, 4) },
@@ -121,8 +123,9 @@ function siege() {
     { t: 4, kind: 'move', unit: us[0].id, from: tile(6, 4), to: tile(7, 4) },
     { t: 4, kind: 'capture', city: c.id, from: 1, to: 0, unit: us[0].id },
     { t: 7, kind: 'shot', from: { unit: us[2].id }, target: { unit: us[1].id }, dmg: 0 },
+    { t: 8, kind: 'built', city: hold.id, item: { building: 'wall', plot: 9 } },
   ]
-  return { ev, prev: state(us, [c]) }
+  return { ev, prev: state(us, [c, hold]) }
 }
 
 function economy() {
@@ -133,7 +136,7 @@ function economy() {
   const ev: GameEvent[] = [
     { t: 1, kind: 'move', unit: settler.id, from: tile(5, 6), to: tile(6, 6) },
     { t: 8, kind: 'found', city: founded, unit: settler.id },
-    { t: 8, kind: 'built', city: c.id, item: 'walls' },
+    { t: 8, kind: 'built', city: c.id, item: { building: 'market', plot: 2 } },
     { t: 8, kind: 'spawn', unit: fresh, city: c.id },
     { t: 8, kind: 'grow', city: c.id, pop: 4 },
   ]

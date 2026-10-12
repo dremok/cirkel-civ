@@ -231,7 +231,11 @@ function buildPlan(events: GameEvent[], secPerTick: number, opts: ReplayAudioOpt
           end = Math.max(end, 0.55 * k)
           break
         case 'built':
-          if (e.item === 'walls') add('built', 0.05 * k, cityTile.get(e.city) ?? null)
+          // units are announced by their 'spawn'; buildings settle into place, fortifications heavier
+          if (typeof e.item !== 'string') {
+            const fort = e.item.building === 'wall' || e.item.building === 'tower'
+            add('built', 0.05 * k, cityTile.get(e.city) ?? null, fort ? 1.2 : 1, fort ? 0.8 : undefined)
+          }
           end = Math.max(end, 0.8 * k)
           break
         case 'grow':
