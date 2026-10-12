@@ -3,7 +3,7 @@ import type { CreateOptions, GameSummary, ServerMessage } from '../../shared/pro
 import { audio } from '../audio/index.ts'
 import { connection } from '../net/connection.ts'
 import { errorText } from '../net/errors.ts'
-import { getName, getSeatToken, markAutostart, setName as storeName, setSeatToken } from '../net/storage.ts'
+import { getName, getSeatToken, markAutostart, nameOrDefault, setName as storeName, setSeatToken } from '../net/storage.ts'
 import { PLAYERS } from '../render/palette.ts'
 import { Emblem } from './Emblem.tsx'
 import { loadPlay } from './GamePage.tsx'
@@ -11,7 +11,7 @@ import { Icon } from './icons.tsx'
 import { NewGameSheet } from './NewGameSheet.tsx'
 import { HelpSheet } from './HelpSheet.tsx'
 import { gameHash, go } from './route.ts'
-import { possessive } from './strings.ts'
+import { friendlyName, possessive } from './strings.ts'
 import { toast } from './toast.tsx'
 
 type Pending = { bot: boolean } | null
@@ -71,10 +71,10 @@ export function Home() {
     return n
   }
 
-  const create = (options: CreateOptions, bot: boolean) => {
+  const create = (options: CreateOptions, bot: boolean, playerName: string) => {
     audio.ui('confirm')
     setPending({ bot })
-    connection().send({ type: 'create', options, playerName: playerName() || 'Player' })
+    connection().send({ type: 'create', options, playerName })
   }
   // The create request waits in the queue while offline; do not leave the button hanging forever.
   useEffect(() => {
@@ -87,8 +87,13 @@ export function Home() {
   }, [pending])
 
   const playBot = () => {
-    const n = playerName() || 'Player'
-    create({ name: `${n} vs bot`, seats: 2, bots: 1, mapSize: 'small', turnSeconds: null }, true)
+    storeName(name)
+    const { name: n, made } = nameOrDefault(friendlyName)
+    if (made) {
+      setName(n)
+      toast(`You are playing as ${n}. Change your name here any time.`, 'info', 4200)
+    }
+    create({ name: `${n} vs bot`, seats: 2, bots: 1, mapSize: 'small', turnSeconds: null }, true, n)
   }
 
   const mine = (games ?? []).filter((g) => getSeatToken(g.id))
@@ -170,7 +175,7 @@ export function Home() {
           onClose={() => setSheet(null)}
           onCreate={(o) => {
             setSheet(null)
-            create(o, false)
+            create(o, false, playerName())
           }}
         />
       )}

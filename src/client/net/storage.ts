@@ -27,6 +27,15 @@ export function setName(name: string): void {
   set('name', name.trim() || null)
 }
 
+/** The stored name, or a friendly one made up (and stored) for a player who never typed one. */
+export function nameOrDefault(make: () => string): { name: string; made: boolean } {
+  const n = getName().trim()
+  if (n) return { name: n, made: false }
+  const made = make()
+  setName(made)
+  return { name: made, made: true }
+}
+
 export interface SeatToken {
   token: string
   seat: number

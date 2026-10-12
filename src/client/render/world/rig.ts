@@ -157,7 +157,7 @@ export function createRig(camera: THREE.PerspectiveCamera, dom: HTMLElement, lay
 
   const homePitch = () => (portrait() ? 0.92 : 0.76)
 
-  /** View centred on a point, close enough that a disc of `radius` world units fills the visible area. */
+  /** View centred exactly on a point, close enough that a disc of `radius` world units fills the visible area. */
   function regionView(px: number, py: number, pz: number, radius: number): State {
     const s: State = { x: px, y: py, z: pz, yaw: defaultYaw ?? 0, pitch: homePitch(), dist: 0 }
     vcam.fov = camera.fov
@@ -184,25 +184,6 @@ export function createRig(camera: THREE.PerspectiveCamera, dom: HTMLElement, lay
       else lo = s.dist
     }
     s.dist = hi
-    // Keep the view on the board: slide the target until the visible ground stays within it
-    // (a start near the rim should not leave half the screen empty). Centre where it can't fit.
-    const ndcs: [number, number][] = [[xc, v.y0], [xc, v.y1], [v.x0, yc], [v.x1, yc], [v.x0, v.y0], [v.x1, v.y0]]
-    for (let it = 0; it < 4; it++) {
-      place(vcam, s)
-      let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity
-      for (const [nx, ny] of ndcs) {
-        ray.origin.setFromMatrixPosition(vcam.matrixWorld)
-        ray.direction.set(nx, ny, 0.5).unproject(vcam).sub(ray.origin).normalize()
-        if (ray.direction.y > -0.05) continue
-        ray.at((py - ray.origin.y) / ray.direction.y, tmp)
-        x0 = Math.min(x0, tmp.x); x1 = Math.max(x1, tmp.x); z0 = Math.min(z0, tmp.z); z1 = Math.max(z1, tmp.z)
-      }
-      const fit = (lo: number, hi: number, bLo: number, bHi: number) =>
-        hi - lo >= bHi - bLo ? (bLo + bHi) / 2 - (lo + hi) / 2 : lo < bLo ? bLo - lo : hi > bHi ? bHi - hi : 0
-      const pad = 0.6
-      s.x += fit(x0, x1, layout.minX - pad, layout.maxX + pad)
-      s.z += fit(z0, z1, layout.minZ - pad, layout.maxZ + pad)
-    }
     return s
   }
 

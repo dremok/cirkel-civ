@@ -11,12 +11,12 @@ import { connection } from '../../net/connection.ts'
 import { errorText } from '../../net/errors.ts'
 import type { GameSession, GameSnapshot } from '../../net/session.ts'
 import {
-  getFlag, getName, getQuality, getSeenTurn, markAutostart, setFlag, setQuality, setSeatToken, setSeenTurn,
+  getFlag, getQuality, getSeenTurn, markAutostart, nameOrDefault, setFlag, setQuality, setSeatToken, setSeenTurn,
 } from '../../net/storage.ts'
 import { HelpSheet } from '../HelpSheet.tsx'
 import { gameHash, gameUrl, go } from '../route.ts'
 import { shareLink } from '../share.ts'
-import { turnsWord, unitNoun } from '../strings.ts'
+import { friendlyName, turnsWord, unitNoun } from '../strings.ts'
 import { toast } from '../toast.tsx'
 import { openCity, setCityOpener } from './cityHook.ts'
 import { cityEconomy } from './economy.ts'
@@ -260,11 +260,12 @@ export function Play({ session, snap }: { session: GameSession; snap: GameSnapsh
         : m.state.turn > before
     if (m.previous && fresh) startReplay(m.previous, m.events, m.state)
     else if (!playingRef.current) view.setState(m.state, m.you)
-    // Opening shot on phones: come in on your capital (or first city), close enough to play.
-    // Desktops keep the whole board. Spectators and the eliminated get the whole board too.
-    if (before === null && m.you !== null && matchMedia('(pointer: coarse)').matches) {
+    // Opening shot: ease in on your capital (or first city), close enough to play. Spectators
+    // keep the whole board. (world.home({ around }) would be the natural call, but it does not
+    // centre the tile yet; focus does, and stops at the board's edge.)
+    if (before === null && m.you !== null) {
       const home = m.state.cities.find((c) => c.owner === m.you && c.capital) ?? m.state.cities.find((c) => c.owner === m.you)
-      if (home) view.world.focus(home.tile, false, { zoom: 'unit' })
+      if (home) view.world.focus(home.tile, true, { zoom: 'unit' })
     }
     // A new turn: start a fresh draft (or the one the server kept for us).
     if (draftTurn.current !== m.state.turn || before === null) {
@@ -734,7 +735,7 @@ export function Play({ session, snap }: { session: GameSession; snap: GameSnapsh
   }
 
   const rematch = () => {
-    const name = getName() || 'Player'
+    const name = nameOrDefault(friendlyName).name
     const conn = connection()
     const off = conn.subscribe((m) => {
       if (m.type === 'error') {

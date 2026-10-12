@@ -80,3 +80,12 @@ export function listNames(names: string[]): string {
   if (names.length <= 1) return names.join('')
   return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`
 }
+
+const NAME_A = ['Amber', 'Quiet', 'Swift', 'Bright', 'Silver', 'Copper', 'Gentle', 'Bold', 'Misty', 'Golden', 'Wild', 'Patient']
+const NAME_B = ['Fox', 'Heron', 'Otter', 'Lynx', 'Raven', 'Badger', 'Hare', 'Owl', 'Stag', 'Wren', 'Falcon', 'Marten']
+
+/** A friendly stand-in for players who never typed a name: "Amber Fox". */
+export function friendlyName(): string {
+  const pick = (xs: string[]) => xs[Math.floor(Math.random() * xs.length)]
+  return `${pick(NAME_A)} ${pick(NAME_B)}`
+}
