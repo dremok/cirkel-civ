@@ -260,12 +260,15 @@ export function Play({ session, snap }: { session: GameSession; snap: GameSnapsh
         : m.state.turn > before
     if (m.previous && fresh) startReplay(m.previous, m.events, m.state)
     else if (!playingRef.current) view.setState(m.state, m.you)
-    // Opening shot: ease in on your capital (or first city), close enough to play. Spectators
-    // keep the whole board. (world.home({ around }) would be the natural call, but it does not
-    // centre the tile yet; focus does, and stops at the board's edge.)
+    // Opening shot: ease in on your own corner of the board (capital, or first city). The world
+    // keeps that framing as "home" across resizes and HUD changes. Spectators get the whole board.
     if (before === null && m.you !== null) {
       const home = m.state.cities.find((c) => c.owner === m.you && c.capital) ?? m.state.cities.find((c) => c.owner === m.you)
-      if (home) view.world.focus(home.tile, true, { zoom: 'unit' })
+      if (home) {
+        view.world.home?.(true, { around: home.tile })
+        // On phones, come in until the units are big enough to tap.
+        if (!view.world.home || matchMedia('(pointer: coarse)').matches) view.world.focus(home.tile, true, { zoom: 'unit' })
+      }
     }
     // A new turn: start a fresh draft (or the one the server kept for us).
     if (draftTurn.current !== m.state.turn || before === null) {
