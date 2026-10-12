@@ -19,11 +19,12 @@ import { BACKDROP, buildEnvironment, buildSky } from './sky.ts'
 import { buildTerrain } from './terrain.ts'
 import { buildWater } from './water.ts'
 
-const TIERS: Record<WorldQuality, { dpr: number; shadow: number; birds: boolean; post: boolean; minFps: number }> = {
-  ultra: { dpr: 2, shadow: 4096, birds: true, post: true, minFps: 45 },
-  high: { dpr: 2, shadow: 4096, birds: true, post: false, minFps: 40 },
-  medium: { dpr: 1.75, shadow: 2048, birds: true, post: false, minFps: 26 },
-  low: { dpr: 1.25, shadow: 1024, birds: false, post: false, minFps: 0 },
+/** post: 'full' = bloom, tilt-shift, grade, SMAA and N8AO; 'glow' = the same without AO; null = direct. */
+const TIERS: Record<WorldQuality, { dpr: number; shadow: number; birds: boolean; post: 'full' | 'glow' | null; minFps: number }> = {
+  ultra: { dpr: 2, shadow: 4096, birds: true, post: 'full', minFps: 45 },
+  high: { dpr: 2, shadow: 4096, birds: true, post: 'glow', minFps: 42 },
+  medium: { dpr: 1.75, shadow: 2048, birds: true, post: null, minFps: 26 },
+  low: { dpr: 1.25, shadow: 1024, birds: false, post: null, minFps: 0 },
 }
 const ORDER: WorldQuality[] = ['ultra', 'high', 'medium', 'low']
 
@@ -35,8 +36,8 @@ export interface WorldOptions {
   quality?: WorldQuality | 'auto'
   /** Override the sun azimuth (degrees, in the default view frame). For tuning. */
   sunAzimuth?: number
-  /** Force post-processing (AO) on or off regardless of tier. For tuning. */
-  post?: boolean
+  /** Force the post chain on ('glow', or 'full' with AO) or off regardless of tier. For tuning. */
+  post?: 'full' | 'glow' | false
   /** Glide the camera in on load (default true). */
   intro?: boolean
 }
@@ -49,8 +50,8 @@ function detectQuality(renderer?: THREE.WebGLRenderer): WorldQuality {
   const gl = renderer?.getContext()
   const info = gl?.getExtension('WEBGL_debug_renderer_info')
   const name = info && gl ? String(gl.getParameter(info.UNMASKED_RENDERER_WEBGL)) : ''
-  if (/Apple M\d|GeForce|RTX|Radeon RX|Radeon Pro/i.test(name)) return 'ultra'
-  return 'high'
+  if (/Apple M\d|GeForce|RTX|Radeon RX|Radeon Pro/i.test(name)) return 'high'
+  return 'medium'
 }
 
 export function createWorld(container: HTMLElement, map: GameMap, opts: WorldOptions = {}): World {
@@ -133,11 +134,15 @@ export function createWorld(container: HTMLElement, map: GameMap, opts: WorldOpt
 
   const drawSize = new THREE.Vector2()
   let post: ReturnType<typeof createPost> | null = null
+  let postKind: 'full' | 'glow' | null = null
   function applyQuality() {
     const t = TIERS[quality]
-    const wantPost = opts.post ?? t.post
-    if (wantPost && !post) post = createPost(renderer, scene, camera)
-    if (!wantPost && post) { post.dispose(); post = null }
+    const want = opts.post === undefined ? t.post : opts.post || null
+    if (want !== postKind) {
+      post?.dispose()
+      post = want ? createPost(renderer, scene, camera, want === 'full') : null
+      postKind = want
+    }
     renderer.toneMapping = post ? THREE.NoToneMapping : THREE.CustomToneMapping
     // three mixes fog after the output transform when drawing straight to the screen, and in
     // linear space when drawing into the composer: hand it the matching encoding of the haze.

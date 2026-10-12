@@ -1,7 +1,7 @@
 // World sandbox: /sandbox/world.html?seed=aurora&seats=2
 // Extra params: size=small|medium|large, quality=low|medium|high|ultra, view=start|close|coast,
 // focus=<tile>, zoom=<wheel notches>, yaw=<px of right-drag>, tilt=<px>, sun=<azimuth deg>,
-// post=0|1 (force AO), intro=0 (no camera glide), home=start (frame the first start area),
+// post=0|glow|full (force the post chain), intro=0 (no camera glide), home=start (frame the first start area),
 // hud=1 (a mock phone HUD with view insets). Debug: world.__bench(n) -> ms per frame.
 import * as THREE from 'three'
 import { generateMap } from '../../engine/mapgen.ts'
@@ -15,7 +15,7 @@ const map = generateMap(q.get('seed') ?? 'aurora', seats, size)
 const world = createWorld(document.getElementById('app')!, map, {
   quality: (q.get('quality') as WorldQuality | null) ?? 'auto',
   sunAzimuth: q.has('sun') ? Number(q.get('sun')) : undefined,
-  post: q.has('post') ? q.get('post') === '1' : undefined,
+  post: q.has('post') ? ((q.get('post') === '0' ? false : q.get('post')) as 'full' | 'glow' | false) : undefined,
   intro: q.get('intro') !== '0',
 })
 addEventListener('resize', () => world.resize())

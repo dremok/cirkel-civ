@@ -40,7 +40,8 @@ export interface World {
   setViewInsets?(insets: { top: number; bottom: number; left: number; right: number }): void
 }
 
-/** 'ultra' adds screen-space ambient occlusion; it is never picked automatically. */
+/** low/medium render straight to the screen; high adds bloom, close-zoom tilt-shift and SMAA (the
+ * default on strong desktop GPUs); ultra also adds screen-space ambient occlusion and is opt-in. */
 export type WorldQuality = 'low' | 'medium' | 'high' | 'ultra'
 
 // ---------------------------------------------------------------------------------------------

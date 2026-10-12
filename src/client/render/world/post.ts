@@ -1,6 +1,7 @@
-// Ultra tier only: N8AO ambient occlusion (soft contact shading under trees, props and pieces, in
-// seams and at cliff feet), a gentle tilt-shift at close zoom, bloom, tone mapping and grade, SMAA. Other tiers render straight to the screen,
-// where the baked occlusion in the terrain does most of this work for a fraction of the cost.
+// The post chain for strong GPUs: a gentle tilt-shift at close zoom, bloom on highlights and glints,
+// tone mapping and grade, SMAA. The ultra tier adds N8AO ambient occlusion (soft contact shading in
+// seams, under trees and pieces); it is the expensive part. Lower tiers render straight to the
+// screen, where the baked occlusion in the terrain does most of that work.
 
 import * as THREE from 'three'
 import { N8AOPostPass } from 'n8ao'
@@ -33,7 +34,7 @@ class GradeEffect extends Effect {
   }
 }
 
-export function createPost(renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.PerspectiveCamera) {
+export function createPost(renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.PerspectiveCamera, withAO: boolean) {
   const size = renderer.getDrawingBufferSize(new THREE.Vector2())
   const composer = new EffectComposer(renderer, { frameBufferType: THREE.HalfFloatType, multisampling: 0 })
   composer.addPass(new RenderPass(scene, camera))
@@ -47,7 +48,7 @@ export function createPost(renderer: THREE.WebGLRenderer, scene: THREE.Scene, ca
   ao.configuration.transparencyAware = false
   ao.configuration.color = new THREE.Color('#2E3A3A')
   ao.configuration.gammaCorrection = false
-  composer.addPass(ao)
+  if (withAO) composer.addPass(ao)
   // A very gentle tilt-shift, faded in only at close zoom (see setZoom): the miniature dream.
   const tilt = new TiltShiftEffect({ offset: 0.04, focusArea: 0.62, feather: 0.32, kernelSize: KernelSize.SMALL, resolutionScale: 0.5 })
   tilt.blendMode.opacity.value = 0
@@ -73,6 +74,7 @@ export function createPost(renderer: THREE.WebGLRenderer, scene: THREE.Scene, ca
     },
     dispose() {
       composer.dispose()
+      if (!withAO) ao.dispose()
     },
   }
 }
