@@ -57,6 +57,10 @@ await click('Skirmish')
 await page.waitForTimeout(5000)
 await click('Big march (16 units)')
 await page.waitForTimeout(4500)
+await click('Siege and capture')
+await page.waitForTimeout(4500)
+await click('Economy turn')
+await page.waitForTimeout(3000)
 const state = await page.evaluate(() => {
   const a = window.audio
   return {
