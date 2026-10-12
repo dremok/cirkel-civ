@@ -152,7 +152,8 @@ The engine is a pure function: `resolve(state, everyone's orders) → new state 
 2. Should the game have fog of war early? It makes height and scouting matter more, but turns become more guesswork.
 3. How long should turns be in a game between friends? No time limit (play over several days), or, say, 2 minutes?
 4. What should the long horizon be about: technology, culture, religion, or something entirely our own?
-5. What should the game be called?
+5. How should a game be won? Today: take every rival city, or the best score after 60 turns. With the current rules equal opponents rarely take all of each other's cities, so most games end on score. Options: a capital victory (take every rival capital), a domination victory (hold two thirds of all cities for a few turns), longer games, or fewer cities.
+6. What should the game be called?
 
 ## 11. How we work
 
@@ -162,3 +163,4 @@ The engine is a pure function: `resolve(state, everyone's orders) → new state 
 ## Changelog
 
 - **v0.1** (12 October 2026): first spec. The game is in English.
+- **v0.2** (12 October 2026): the city interior (5b) is in the game: buildings drive the economy, walls and towers face a direction. Open question 5 added (how to win).
